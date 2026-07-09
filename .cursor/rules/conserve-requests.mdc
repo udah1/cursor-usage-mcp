@@ -1,0 +1,24 @@
+---
+description: Check Cursor usage at task start and conserve requests when near the limit
+alwaysApply: true
+---
+
+# Conserve Cursor requests
+
+At the START of each new task, IF the `cursor-usage` MCP server is available, call its
+`get_usage` tool first (one quick call). If that MCP is not configured/available, ignore this
+rule entirely and behave normally — do not error or mention it.
+
+When `get_usage` returns `conserve: true`:
+
+- Batch ALL clarifying questions into a SINGLE questions/options prompt. Never stop repeatedly to
+  ask one thing at a time — each separate user turn costs usage.
+- Prefer sensible defaults and proceed. Only ask when a choice is genuinely blocking or when an
+  action is destructive/irreversible.
+- Front-load everything you need at the very start in one questions block.
+- Skip unnecessary confirmation round-trips ("should I continue?") — just continue.
+
+When `get_usage` returns `conserve: false`, behave normally.
+
+If `get_usage` returns `needsLogin: true`, tell the user once to run the `login` tool (or
+`npm run login` in the cursor-usage-mcp project), then continue with the task.

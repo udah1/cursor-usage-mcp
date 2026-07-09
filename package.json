@@ -1,0 +1,24 @@
+{
+  "name": "cursor-usage-mcp",
+  "version": "0.1.0",
+  "description": "Local MCP server that reads your Cursor usage/spend from the dashboard's authenticated backend and tells the agent when to conserve requests.",
+  "type": "module",
+  "bin": {
+    "cursor-usage-mcp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "login": "node dist/login-cli.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "playwright": "^1.48.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  }
+}

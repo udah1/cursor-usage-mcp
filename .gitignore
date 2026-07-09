@@ -1,0 +1,5 @@
+node_modules/
+dist/
+# Local session/config store lives in the user's home dir, but ignore any stray local copies too
+.cursor-usage/
+*.local.json
