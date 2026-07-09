@@ -3,7 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { loadStore, saveStore, hasSession, effectiveThreshold } from "./storage.js";
-import { getUsage, decideConserve } from "./usage.js";
+import { getUsage, decideConserve, getUsageBreakdown } from "./usage.js";
 import { runLogin } from "./login.js";
 
 const SERVER_INSTRUCTIONS = `cursor-usage: reads the current user's Cursor usage/spend from the dashboard's
@@ -100,6 +100,39 @@ server.registerTool(
         { type: "text", text: JSON.stringify(result.topEndpoints, null, 2) },
       ],
     };
+  },
+);
+
+server.registerTool(
+  "usage_breakdown",
+  {
+    title: "Per-model cost & token breakdown",
+    description:
+      "Shows this billing cycle's usage broken down by model: cost, request count, and token totals " +
+      "(input/output/cache). Use when the user asks what's costing them or which models they use most. " +
+      "Heavier than get_usage, so call it on request rather than every task.",
+    inputSchema: {},
+  },
+  async () => {
+    const store = loadStore();
+    const b = await getUsageBreakdown(store);
+    if (!b.ok) {
+      return {
+        content: [
+          { type: "text", text: b.needsLogin ? "Login required — run the 'login' tool." : `Could not load breakdown: ${b.error}` },
+        ],
+      };
+    }
+    const lines = b.models.map(
+      (m) =>
+        `  ${m.model}: $${m.costDollars.toFixed(2)} · ${m.requests} req · ` +
+        `${(m.inputTokens / 1e6).toFixed(2)}M in / ${(m.outputTokens / 1e6).toFixed(2)}M out / ${(m.cacheReadTokens / 1e6).toFixed(1)}M cache-read`,
+    );
+    const text =
+      `Usage this cycle — total $${b.totalCostDollars.toFixed(2)} across ${b.models.length} model(s):\n` +
+      lines.join("\n") +
+      `\nTokens: ${(b.totalInputTokens / 1e6).toFixed(2)}M input, ${(b.totalOutputTokens / 1e6).toFixed(2)}M output, ${(b.totalCacheReadTokens / 1e6).toFixed(1)}M cache-read.`;
+    return { content: [{ type: "text", text }, { type: "text", text: JSON.stringify(b, null, 2) }] };
   },
 );
 

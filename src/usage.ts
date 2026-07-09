@@ -15,6 +15,24 @@ export interface SpendInfo {
   pctUsed?: number;
 }
 
+export interface BillingCycle {
+  start: string;
+  end: string;
+  daysElapsed: number;
+  daysLeft: number;
+  cycleLengthDays: number;
+}
+
+export interface Pace {
+  requestsPerDay: number;
+  /** Projected included requests by cycle end at the current rate. */
+  projectedRequests: number;
+  /** Projected requests as a percentage of the limit. */
+  projectedPctOfLimit: number;
+  /** True if projected to exceed the included-request limit before reset. */
+  projectedToExceed: boolean;
+}
+
 export interface UsageReading {
   ok: boolean;
   needsLogin?: boolean;
@@ -23,6 +41,8 @@ export interface UsageReading {
   isUnlimited?: boolean;
   includedRequests?: IncludedRequests;
   spend?: SpendInfo;
+  billingCycle?: BillingCycle;
+  pace?: Pace;
   /** Endpoints that produced data. */
   sources: string[];
   /** Raw JSON per source so the agent can inspect if needed. */
@@ -103,16 +123,26 @@ function centsToDollars(cents: unknown): number | null {
   return typeof cents === "number" ? Math.round((cents / 100) * 100) / 100 : null;
 }
 
-/** Parse /api/usage-summary for membership, unlimited flag, and on-demand spend. */
+/** Parse /api/usage-summary for membership, unlimited flag, on-demand spend, and cycle dates. */
 function parseSummary(json: any): {
   membershipType?: string;
   isUnlimited?: boolean;
   spend?: SpendInfo;
+  billingCycleStart?: string;
+  billingCycleEnd?: string;
 } {
   if (!json || typeof json !== "object") return {};
-  const out: { membershipType?: string; isUnlimited?: boolean; spend?: SpendInfo } = {};
+  const out: {
+    membershipType?: string;
+    isUnlimited?: boolean;
+    spend?: SpendInfo;
+    billingCycleStart?: string;
+    billingCycleEnd?: string;
+  } = {};
   if (typeof json.membershipType === "string") out.membershipType = json.membershipType;
   if (typeof json.isUnlimited === "boolean") out.isUnlimited = json.isUnlimited;
+  if (typeof json.billingCycleStart === "string") out.billingCycleStart = json.billingCycleStart;
+  if (typeof json.billingCycleEnd === "string") out.billingCycleEnd = json.billingCycleEnd;
 
   const onDemand = json?.individualUsage?.onDemand;
   const plan = json?.individualUsage?.plan;
@@ -131,6 +161,32 @@ function parseSummary(json: any): {
     };
   }
   return out;
+}
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+function computeCycle(start: string, end: string): BillingCycle | undefined {
+  const s = new Date(start).getTime();
+  const e = new Date(end).getTime();
+  if (!Number.isFinite(s) || !Number.isFinite(e) || e <= s) return undefined;
+  const now = Date.now();
+  const cycleLengthDays = Math.round((e - s) / MS_PER_DAY);
+  const daysElapsed = Math.max(0, Math.round(((now - s) / MS_PER_DAY) * 10) / 10);
+  const daysLeft = Math.max(0, Math.round(((e - now) / MS_PER_DAY) * 10) / 10);
+  return { start, end, daysElapsed, daysLeft, cycleLengthDays };
+}
+
+function computePace(ir: IncludedRequests, cycle: BillingCycle): Pace {
+  const elapsed = Math.max(0.5, cycle.daysElapsed); // avoid divide-by-zero early in cycle
+  const requestsPerDay = Math.round((ir.used / elapsed) * 10) / 10;
+  const projectedRequests = Math.round(requestsPerDay * cycle.cycleLengthDays);
+  const projectedPctOfLimit = Math.round((projectedRequests / ir.limit) * 1000) / 10;
+  return {
+    requestsPerDay,
+    projectedRequests,
+    projectedPctOfLimit,
+    projectedToExceed: projectedRequests > ir.limit,
+  };
 }
 
 export async function getUsage(store: Store): Promise<UsageReading> {
@@ -179,10 +235,18 @@ export async function getUsage(store: Store): Promise<UsageReading> {
         reading.membershipType = parsed.membershipType;
         reading.isUnlimited = parsed.isUnlimited;
         reading.spend = parsed.spend;
+        if (parsed.billingCycleStart && parsed.billingCycleEnd) {
+          reading.billingCycle = computeCycle(parsed.billingCycleStart, parsed.billingCycleEnd);
+        }
       } else if (!lastError) lastError = `HTTP ${status} from ${summaryEp.url}`;
     } catch (err) {
       if (!lastError) lastError = err instanceof Error ? err.message : String(err);
     }
+  }
+
+  // Burn-rate projection from included requests + cycle progress.
+  if (reading.includedRequests && reading.billingCycle) {
+    reading.pace = computePace(reading.includedRequests, reading.billingCycle);
   }
 
   if (reading.includedRequests || reading.spend) {
@@ -219,6 +283,16 @@ function buildSummary(r: UsageReading): string {
     parts.push(`On-demand spend: $${s.usedDollars.toFixed(2)}/${limit}`);
   }
   if (r.membershipType) parts.push(`Plan: ${r.membershipType}${r.isUnlimited ? " (unlimited)" : ""}`);
+  if (r.billingCycle) {
+    const resetDate = new Date(r.billingCycle.end).toISOString().slice(0, 10);
+    parts.push(`Resets ${resetDate} (${r.billingCycle.daysLeft}d left)`);
+  }
+  if (r.pace) {
+    const flag = r.pace.projectedToExceed ? " ⚠ over limit" : "";
+    parts.push(
+      `Pace: ${r.pace.requestsPerDay}/day → ~${r.pace.projectedRequests} by reset (${r.pace.projectedPctOfLimit}%${flag})`,
+    );
+  }
   return parts.join(" | ") || "No usage data parsed.";
 }
 
@@ -257,4 +331,100 @@ export function decideConserve(reading: UsageReading, thresholdPct: number): Con
   base.conserve = pct >= thresholdPct;
   base.reason = `Used ${pct}% (threshold ${thresholdPct}%) => ${base.conserve ? "CONSERVE" : "normal"}.`;
   return base;
+}
+
+export interface ModelUsage {
+  model: string;
+  costDollars: number;
+  requests: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+}
+
+export interface UsageBreakdown {
+  ok: boolean;
+  needsLogin?: boolean;
+  error?: string;
+  teamId?: string;
+  models: ModelUsage[];
+  totalCostDollars: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalCacheReadTokens: number;
+  totalCacheWriteTokens: number;
+}
+
+/** Extract the numeric team id from the stored cookie or endpoint URLs. */
+export function getTeamId(store: Store): string | undefined {
+  const fromCookie = store.cookieHeader?.match(/team_id=(\d+)/)?.[1];
+  if (fromCookie) return fromCookie;
+  for (const ep of store.endpoints) {
+    const m = ep.url.match(/teamId=(\d+)/);
+    if (m) return m[1];
+  }
+  return undefined;
+}
+
+const num = (v: unknown): number => {
+  const n = typeof v === "string" ? Number(v) : typeof v === "number" ? v : 0;
+  return Number.isFinite(n) ? n : 0;
+};
+
+/** Per-model cost/token breakdown for the current cycle (get-aggregated-usage-events). */
+export async function getUsageBreakdown(store: Store): Promise<UsageBreakdown> {
+  const empty: UsageBreakdown = {
+    ok: false,
+    models: [],
+    totalCostDollars: 0,
+    totalInputTokens: 0,
+    totalOutputTokens: 0,
+    totalCacheReadTokens: 0,
+    totalCacheWriteTokens: 0,
+  };
+  if (!hasSession(store)) {
+    return { ...empty, needsLogin: true, error: "No session stored. Run the 'login' tool first." };
+  }
+  const teamId = getTeamId(store);
+  if (!teamId) return { ...empty, error: "Could not determine team id from the stored session." };
+
+  const ep: CapturedEndpoint = {
+    url: "https://cursor.com/api/dashboard/get-aggregated-usage-events",
+    method: "POST",
+    postData: JSON.stringify({ teamId: Number(teamId) }),
+    contentType: "application/json",
+  };
+  try {
+    const { status, json } = await fetchJson(ep, store.cookieHeader!);
+    if (status === 401 || status === 403) {
+      return { ...empty, needsLogin: true, error: `Session expired (HTTP ${status}). Re-run 'login'.` };
+    }
+    if (!json) return { ...empty, error: `HTTP ${status} from ${ep.url}` };
+
+    const models: ModelUsage[] = (Array.isArray(json.aggregations) ? json.aggregations : [])
+      .map((a: any) => ({
+        model: String(a.modelIntent ?? "unknown"),
+        costDollars: Math.round(num(a.totalCents)) / 100,
+        requests: num(a.requestCost),
+        inputTokens: num(a.inputTokens),
+        outputTokens: num(a.outputTokens),
+        cacheReadTokens: num(a.cacheReadTokens),
+        cacheWriteTokens: num(a.cacheWriteTokens),
+      }))
+      .sort((x: ModelUsage, y: ModelUsage) => y.costDollars - x.costDollars);
+
+    return {
+      ok: true,
+      teamId,
+      models,
+      totalCostDollars: Math.round(num(json.totalCostCents)) / 100,
+      totalInputTokens: num(json.totalInputTokens),
+      totalOutputTokens: num(json.totalOutputTokens),
+      totalCacheReadTokens: num(json.totalCacheReadTokens),
+      totalCacheWriteTokens: num(json.totalCacheWriteTokens),
+    };
+  } catch (err) {
+    return { ...empty, error: err instanceof Error ? err.message : String(err) };
+  }
 }
