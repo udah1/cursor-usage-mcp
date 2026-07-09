@@ -58,8 +58,10 @@ npm run build
 First-time login (either works):
 
 ```bash
-npm run login          # standalone CLI flow
-# — or — call the `login` tool from inside Cursor once the MCP is loaded
+# call the `login` tool from inside Cursor once the MCP is loaded (Simply by asking log into cursor-usage)
+
+# — or — standalone CLI flow
+npm run login
 ```
 
 The server is already registered in `~/.cursor/mcp.json` as `cursor-usage`. Restart Cursor (or
