@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync, existsSync, rmSync } from "node:fs";
 
 /**
  * All persistent state lives in ~/.cursor-usage so it survives across projects
@@ -71,6 +71,24 @@ export function saveStore(store: Store): void {
 
 export function hasSession(store: Store): boolean {
   return Boolean(store.cookieHeader && store.endpoints.length > 0);
+}
+
+/**
+ * Clear the stored session (cookie + discovered endpoints), keeping the threshold config.
+ * Optionally also wipe the saved Playwright browser profile so the next login is a full re-auth.
+ */
+export function clearSession(alsoBrowser: boolean): { clearedBrowser: boolean } {
+  const store = loadStore();
+  store.cookieHeader = undefined;
+  store.endpoints = [];
+  store.capturedAt = undefined;
+  saveStore(store);
+  let clearedBrowser = false;
+  if (alsoBrowser && existsSync(BROWSER_DIR)) {
+    rmSync(BROWSER_DIR, { recursive: true, force: true });
+    clearedBrowser = true;
+  }
+  return { clearedBrowser };
 }
 
 /**

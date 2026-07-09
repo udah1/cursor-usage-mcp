@@ -72,6 +72,7 @@ reload the MCP) after `npm run build` so it picks up `dist/index.js`.
 | `get_usage` | Reads usage and returns the conserve decision. Call at task start. Includes included-request count, on-demand spend, plan, **billing-cycle reset + days left**, and a **burn-rate projection** (requests/day → projected total by reset). |
 | `usage_breakdown` | This cycle's usage broken down **by model**: cost, request count, and token totals (input/output/cache). Heavier than `get_usage`; call on request. |
 | `login` | Browser login + endpoint auto-discovery. Re-run when the session expires. Reports current usage immediately. |
+| `logout` | Clears the stored session (cookie + endpoints). `forgetBrowser=true` also wipes the saved browser profile. |
 | `set_threshold` | Sets the persisted threshold (0-100). Default **0** = conserve whenever requests remain. Overridden by the `CURSOR_USAGE_THRESHOLD_PCT` env var if set. |
 | `status` | Shows whether a session/endpoints are stored, capture time, and stored/env/effective threshold. |
 

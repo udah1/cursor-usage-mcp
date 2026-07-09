@@ -2,7 +2,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { loadStore, saveStore, hasSession, effectiveThreshold } from "./storage.js";
+import { loadStore, saveStore, hasSession, effectiveThreshold, clearSession } from "./storage.js";
 import { getUsage, decideConserve, getUsageBreakdown } from "./usage.js";
 import { runLogin } from "./login.js";
 
@@ -133,6 +133,34 @@ server.registerTool(
       lines.join("\n") +
       `\nTokens: ${(b.totalInputTokens / 1e6).toFixed(2)}M input, ${(b.totalOutputTokens / 1e6).toFixed(2)}M output, ${(b.totalCacheReadTokens / 1e6).toFixed(1)}M cache-read.`;
     return { content: [{ type: "text", text }, { type: "text", text: JSON.stringify(b, null, 2) }] };
+  },
+);
+
+server.registerTool(
+  "logout",
+  {
+    title: "Log out (clear stored session)",
+    description:
+      "Clears the stored session cookie and discovered endpoints so get_usage reports needsLogin. " +
+      "Set forgetBrowser=true to also wipe the saved browser profile (forces a full re-login next time). " +
+      "Threshold config is preserved.",
+    inputSchema: {
+      forgetBrowser: z
+        .boolean()
+        .optional()
+        .describe("Also delete the saved Playwright browser profile. Default false."),
+    },
+  },
+  async ({ forgetBrowser }) => {
+    const { clearedBrowser } = clearSession(Boolean(forgetBrowser));
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Logged out — cleared stored session${clearedBrowser ? " and browser profile" : ""}. Run 'login' to reconnect.`,
+        },
+      ],
+    };
   },
 );
 
