@@ -119,8 +119,12 @@ stored cookie) to the two reliable dashboard endpoints:
 
 The browser (Playwright) is used **only during `login`** to capture your session cookie and
 discover these endpoints. The conserve decision is based on the **included-request percentage**
-(the "X / 500" number). The team-spend `POST` endpoints are intentionally ignored — they require a
-CSRF origin, are team-wide, and previously caused a units bug (spend-cents vs dollar-limit).
+(the "X / 500" number).
+
+**Budget vs. team cap.** The spend line reports your **actual** on-demand budget from
+`individualUsage.onDemand.limit` (authoritative for you), and — for context — the team-wide default
+per-user cap from `get-hard-limit` (`hardLimitPerUser`). These usually match, but can differ if your
+org sets per-user overrides; the tool flags it when they diverge.
 
 `get_usage` always returns the **raw** JSON per source, so if a field ever looks off you can inspect
 `raw` and adjust `parseIncludedRequests` / `parseSummary` in `src/usage.ts`.

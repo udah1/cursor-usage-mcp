@@ -9,10 +9,15 @@ export interface IncludedRequests {
 
 export interface SpendInfo {
   usedDollars: number;
+  /** The individual's actual, effective on-demand budget (authoritative for this user). */
   limitDollars: number | null;
   remainingDollars: number | null;
   /** Percent of the included budget used, if the API reports it. */
   pctUsed?: number;
+  /** Team-wide default per-user hard limit (from get-hard-limit); context only. */
+  perUserHardLimitDollars?: number | null;
+  /** True when the individual's actual budget differs from the team per-user cap. */
+  budgetDiffersFromTeamCap?: boolean;
 }
 
 export interface BillingCycle {
@@ -205,6 +210,20 @@ export async function getUsage(store: Store): Promise<UsageReading> {
   let sawAuthError = false;
   let lastError = "";
 
+  // Kick off the team per-user hard-limit fetch in parallel (context for the spend line).
+  const teamId = getTeamId(store);
+  const hardLimitPromise = teamId
+    ? fetchJson(
+        {
+          url: "https://cursor.com/api/dashboard/get-hard-limit",
+          method: "POST",
+          postData: JSON.stringify({ teamId: Number(teamId) }),
+          contentType: "application/json",
+        },
+        cookie,
+      ).catch(() => ({ status: 0 }) as { status: number; json?: any })
+    : null;
+
   // 1) Included-request usage (the "X / 500" number).
   const usageEp = store.endpoints.find((e) => isModelUsageEndpoint(e.url) && e.method === "GET");
   if (usageEp) {
@@ -244,6 +263,23 @@ export async function getUsage(store: Store): Promise<UsageReading> {
     }
   }
 
+  // 3) Team per-user hard limit — merge into spend as context.
+  if (hardLimitPromise) {
+    const hl = await hardLimitPromise;
+    const perUser = typeof hl.json?.hardLimitPerUser === "number" ? hl.json.hardLimitPerUser : null;
+    if (perUser !== null) {
+      reading.raw.hardLimit = hl.json;
+      if (!reading.sources.includes("get-hard-limit")) reading.sources.push("get-hard-limit");
+      if (!reading.spend) {
+        reading.spend = { usedDollars: 0, limitDollars: null, remainingDollars: null };
+      }
+      reading.spend.perUserHardLimitDollars = perUser;
+      if (reading.spend.limitDollars !== null) {
+        reading.spend.budgetDiffersFromTeamCap = reading.spend.limitDollars !== perUser;
+      }
+    }
+  }
+
   // Burn-rate projection from included requests + cycle progress.
   if (reading.includedRequests && reading.billingCycle) {
     reading.pace = computePace(reading.includedRequests, reading.billingCycle);
@@ -280,7 +316,11 @@ function buildSummary(r: UsageReading): string {
   if (r.spend) {
     const s = r.spend;
     const limit = s.limitDollars === null ? "unlimited" : `$${s.limitDollars.toFixed(2)}`;
-    parts.push(`On-demand spend: $${s.usedDollars.toFixed(2)}/${limit}`);
+    let line = `On-demand spend: $${s.usedDollars.toFixed(2)}/${limit}`;
+    if (typeof s.perUserHardLimitDollars === "number") {
+      line += ` (team per-user cap: $${s.perUserHardLimitDollars.toFixed(2)}${s.budgetDiffersFromTeamCap ? " — differs from your budget" : ""})`;
+    }
+    parts.push(line);
   }
   if (r.membershipType) parts.push(`Plan: ${r.membershipType}${r.isUnlimited ? " (unlimited)" : ""}`);
   if (r.billingCycle) {
