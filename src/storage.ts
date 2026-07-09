@@ -72,3 +72,17 @@ export function saveStore(store: Store): void {
 export function hasSession(store: Store): boolean {
   return Boolean(store.cookieHeader && store.endpoints.length > 0);
 }
+
+/**
+ * Effective activation threshold. The CURSOR_USAGE_THRESHOLD_PCT env var (settable in
+ * mcp.json) takes precedence over the value persisted by the set_threshold tool, so users
+ * can configure it declaratively without a tool call. Falls back to the stored value.
+ */
+export function effectiveThreshold(store: Store): number {
+  const raw = process.env.CURSOR_USAGE_THRESHOLD_PCT;
+  if (raw !== undefined && raw.trim() !== "") {
+    const n = Number(raw);
+    if (Number.isFinite(n) && n >= 0 && n <= 100) return n;
+  }
+  return store.activationThresholdPct;
+}

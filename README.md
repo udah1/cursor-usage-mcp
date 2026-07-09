@@ -1,8 +1,32 @@
 # cursor-usage-mcp
 
-A **local** MCP server that reads your current Cursor usage/spend from the dashboard's
-authenticated backend and tells the agent when to **conserve requests** — by batching clarifying
-questions into a single prompt, preferring defaults, and cutting confirmation round-trips.
+**Purpose: stop the Cursor agent from burning through your request quota.**
+
+On many Cursor plans you get a fixed pool of included requests (e.g. **500 / month**) and then pay
+per request out of a budget. Every time the agent stops mid-task to ask you a one-off question,
+your answer starts a **new billable turn** — so a chatty agent quietly eats your quota.
+
+This is a **local** MCP server that fixes that. It reads your **live** usage from the same backend
+your Cursor dashboard uses, and hands the agent a `conserve` flag. When you're consuming your quota,
+a bundled rule makes the agent **conserve requests** by:
+
+- **batching all clarifying questions into a single prompt** (one turn instead of many),
+- **preferring sensible defaults** and proceeding instead of stopping to ask,
+- **cutting needless confirmation round-trips** ("should I continue?").
+
+### How it works (three pieces)
+
+1. **`login`** (one-time) — opens a browser via Playwright, you log into Cursor, and it captures
+   your session cookie + auto-discovers the usage endpoints, storing them at `~/.cursor-usage/`.
+2. **`get_usage`** — makes a direct authenticated API call (no browser) and returns your
+   included-request usage (e.g. `278/500`), on-demand spend (`$0/$75`), and a `conserve` decision
+   computed against a threshold.
+3. **`conserve-requests` rule** (installed globally) — tells the agent to call `get_usage` at the
+   start of each task and follow the conserve behavior above when the flag is on.
+
+The threshold controls *when* conserving kicks in: `0` (default) = conserve whenever you still have
+requests; `80` = only conserve once you've used 80% of the quota. See
+[Tuning](#tuning-when-conserve-mode-kicks-in) below.
 
 > **Heads up / caveats**
 > - This scrapes an **undocumented internal Cursor endpoint** (the same one your dashboard calls).
@@ -47,17 +71,42 @@ reload the MCP) after `npm run build` so it picks up `dist/index.js`.
 |------|--------------|
 | `get_usage` | Reads usage and returns the conserve decision. Call at task start. |
 | `login` | Browser login + endpoint auto-discovery. Re-run when the session expires. |
-| `set_threshold` | Sets `activationThresholdPct` (0-100). Default **0** = conserve whenever requests remain. |
+| `set_threshold` | Sets the persisted threshold (0-100). Default **0** = conserve whenever requests remain. Overridden by the `CURSOR_USAGE_THRESHOLD_PCT` env var if set. |
 | `status` | Shows whether a session/endpoints are stored, capture time, and current threshold. |
 
 ## Tuning when conserve mode kicks in
 
-- `activationThresholdPct = 0` (default): conserve as long as any requests remain.
-- `activationThresholdPct = 80`: only conserve once you've used ≥80% of the limit.
+The threshold is the minimum **used percentage** at which conserve mode activates:
+
+- `0` (default): conserve as long as any requests remain.
+- `80`: only conserve once you've used ≥80% of the limit.
+
+There are two ways to set it, and **the env var wins** if both are set:
+
+**1. Env var (recommended — declarative, in `mcp.json`):**
+
+```json
+"cursor-usage": {
+  "command": "node",
+  "args": ["/ABSOLUTE/PATH/TO/cursor-usage-mcp/dist/index.js"],
+  "env": {
+    "CURSOR_USAGE_THRESHOLD_PCT": "80"
+  }
+}
+```
+
+Change the number and reload the MCP. Accepts `0`–`100`. Leave it as `"0"` (or remove it) for the
+default always-conserve behavior. If `CURSOR_USAGE_THRESHOLD_PCT` is set, it **overrides** any value
+set via the tool below.
+
+**2. `set_threshold` tool (persisted in `~/.cursor-usage`):**
 
 ```
 set_threshold { "activationThresholdPct": 80 }
 ```
+
+Used only when the env var is unset/empty. Run `status` to see `storedThresholdPct`,
+`envThresholdPct`, and the resulting `effectiveThresholdPct`.
 
 ## How usage is read (no browser at query time)
 

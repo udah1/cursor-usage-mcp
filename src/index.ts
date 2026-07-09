@@ -2,7 +2,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { loadStore, saveStore, hasSession } from "./storage.js";
+import { loadStore, saveStore, hasSession, effectiveThreshold } from "./storage.js";
 import { getUsage, decideConserve } from "./usage.js";
 import { runLogin } from "./login.js";
 
@@ -40,7 +40,7 @@ server.registerTool(
   async () => {
     const store = loadStore();
     const reading = await getUsage(store);
-    const decision = decideConserve(reading, store.activationThresholdPct);
+    const decision = decideConserve(reading, effectiveThreshold(store));
     const mode = decision.conserve
       ? "CONSERVE MODE ON — batch questions into one prompt, prefer defaults, cut round-trips."
       : "Conserve mode off — behave normally.";
@@ -83,7 +83,7 @@ server.registerTool(
     if (result.cookieCaptured && result.endpointsFound > 0) {
       const store = loadStore();
       const reading = await getUsage(store);
-      const decision = decideConserve(reading, store.activationThresholdPct);
+      const decision = decideConserve(reading, effectiveThreshold(store));
       const mode = decision.conserve ? "CONSERVE MODE ON" : "Conserve mode off";
       usageText = `\n\nCurrent usage: ${decision.summary}\n${mode} — ${decision.reason}`;
     }
@@ -143,7 +143,9 @@ server.registerTool(
               capturedAt: store.capturedAt ?? null,
               endpointCount: store.endpoints.length,
               endpoints: store.endpoints.map((e) => `${e.method} ${e.url}`),
-              activationThresholdPct: store.activationThresholdPct,
+              storedThresholdPct: store.activationThresholdPct,
+              envThresholdPct: process.env.CURSOR_USAGE_THRESHOLD_PCT ?? null,
+              effectiveThresholdPct: effectiveThreshold(store),
             },
             null,
             2,
