@@ -41,12 +41,12 @@ server.registerTool(
     const store = loadStore();
     const reading = await getUsage(store);
     const decision = decideConserve(reading, store.activationThresholdPct);
-    const summary = decision.conserve
+    const mode = decision.conserve
       ? "CONSERVE MODE ON — batch questions into one prompt, prefer defaults, cut round-trips."
       : "Conserve mode off — behave normally.";
     return {
       content: [
-        { type: "text", text: `${summary}\n${decision.reason}` },
+        { type: "text", text: `${decision.summary}\n${mode}\n${decision.reason}` },
         { type: "text", text: JSON.stringify(decision, null, 2) },
       ],
     };
@@ -77,13 +77,25 @@ server.registerTool(
       timeoutMs: (timeoutSeconds ?? 240) * 1000,
       log: (m) => logs.push(m),
     });
+
+    // Immediately report current usage so the user sees it right after login.
+    let usageText = "";
+    if (result.cookieCaptured && result.endpointsFound > 0) {
+      const store = loadStore();
+      const reading = await getUsage(store);
+      const decision = decideConserve(reading, store.activationThresholdPct);
+      const mode = decision.conserve ? "CONSERVE MODE ON" : "Conserve mode off";
+      usageText = `\n\nCurrent usage: ${decision.summary}\n${mode} — ${decision.reason}`;
+    }
+
     return {
       content: [
         {
           type: "text",
           text:
             `Login finished. cookieCaptured=${result.cookieCaptured}, endpointsFound=${result.endpointsFound}.\n` +
-            logs.join("\n"),
+            logs.join("\n") +
+            usageText,
         },
         { type: "text", text: JSON.stringify(result.topEndpoints, null, 2) },
       ],

@@ -59,8 +59,18 @@ reload the MCP) after `npm run build` so it picks up `dist/index.js`.
 set_threshold { "activationThresholdPct": 80 }
 ```
 
-## Notes on accuracy
+## How usage is read (no browser at query time)
 
-The usage endpoint's exact JSON shape isn't guaranteed, so `get_usage` always returns the **raw**
-response alongside its best-effort parse. If the parsed `usedPct` looks wrong, inspect `raw` and
-adjust the parser in `src/usage.ts` (`parseModelUsageMap` / `parseGeneric`).
+`get_usage` does **not** open a browser. It makes direct authenticated `GET` requests (with your
+stored cookie) to the two reliable dashboard endpoints:
+
+- **`/api/usage`** → included-request count (`gpt-4.numRequests` / `maxRequestUsage`), e.g. `278/500`.
+- **`/api/usage-summary`** → `membershipType`, `isUnlimited`, and on-demand spend (`individualUsage.onDemand`, cents → dollars).
+
+The browser (Playwright) is used **only during `login`** to capture your session cookie and
+discover these endpoints. The conserve decision is based on the **included-request percentage**
+(the "X / 500" number). The team-spend `POST` endpoints are intentionally ignored — they require a
+CSRF origin, are team-wide, and previously caused a units bug (spend-cents vs dollar-limit).
+
+`get_usage` always returns the **raw** JSON per source, so if a field ever looks off you can inspect
+`raw` and adjust `parseIncludedRequests` / `parseSummary` in `src/usage.ts`.

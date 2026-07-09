@@ -22,3 +22,7 @@ When `get_usage` returns `conserve: false`, behave normally.
 
 If `get_usage` returns `needsLogin: true`, tell the user once to run the `login` tool (or
 `npm run login` in the cursor-usage-mcp project), then continue with the task.
+
+Whenever you (or the user) run the `login` tool, IMMEDIATELY report the current usage it returns
+(included requests X/limit, percent used, and on-demand spend) in your reply — don't make the user
+ask for it separately.
