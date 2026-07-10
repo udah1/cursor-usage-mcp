@@ -67,6 +67,26 @@ npm run login
 The server is already registered in `~/.cursor/mcp.json` as `cursor-usage`. Restart Cursor (or
 reload the MCP) after `npm run build` so it picks up `dist/index.js`.
 
+## Applying changes to existing chats
+
+**New chats** pick up the rule and MCP automatically — nothing to do.
+
+For a chat that was **already open** before you installed/updated this:
+
+1. **Reload the MCP once** (Settings → MCP → toggle `cursor-usage` off/on). This restarts the shared
+   server, so every chat — including open ones — sees the latest code and tools on its next turn.
+2. **Nudge the existing chat** so it starts behaving immediately (rules are re-read per turn, but an
+   explicit nudge guarantees it):
+
+   ```
+   From now on follow the conserve-requests rule: call the cursor-usage get_usage tool,
+   report my current usage, and if conserve is on — batch questions and prefer defaults.
+   If verbose is on, end every message with the footer.
+   ```
+
+There is no skill or API to broadcast a rule into already-open chats — the one-time MCP reload plus
+this nudge is the mechanism.
+
 ## Tools
 
 | Tool | What it does |
