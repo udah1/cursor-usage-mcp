@@ -28,5 +28,5 @@ Whenever you (or the user) run the `login` tool, IMMEDIATELY report the current 
 ask for it separately.
 
 If `get_usage` returns `verbose: true`, end EVERY message you send for the rest of the task with the
-exact `footer` string it returned (a line beginning with **Cursor Usage:**). If `verbose` is false
-or absent, do not add the footer.
+exact `footer` string it returned (a fenced code block starting with `Cursor Usage:`). If `verbose`
+is false or absent, do not add the footer.

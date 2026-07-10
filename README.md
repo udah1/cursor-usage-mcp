@@ -113,9 +113,11 @@ to the end of every message:
 "env": { "CURSOR_USAGE_VERBOSE": "true" }
 ```
 
-Footer format (only the label is bold):
+Footer format (rendered as a fenced code block):
 
-> **Cursor Usage:** 290/500 requests · $0.00/$75.00 _(~as of task start)_
+```
+Cursor Usage: 290/500 requests · $0.00/$75.00 (~as of task start)
+```
 
 You can also toggle it at runtime without editing `mcp.json` via the **`set_verbose`** tool
 (persisted in `~/.cursor-usage`). The `CURSOR_USAGE_VERBOSE` env var, if set, **overrides** the tool

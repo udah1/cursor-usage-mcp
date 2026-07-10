@@ -55,7 +55,7 @@ server.registerTool(
     const footer = verbose ? buildFooter(reading) : undefined;
     let text = `${decision.summary}\n${mode}\n${decision.reason}`;
     if (verbose && footer) {
-      text += `\n\nVERBOSE MODE ON — end EVERY message you send this task with this exact line:\n${footer}`;
+      text += `\n\nVERBOSE MODE ON — end EVERY message you send this task with this exact code block:\n${footer}`;
     }
     return {
       content: [
