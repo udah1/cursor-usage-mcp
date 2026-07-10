@@ -51,7 +51,7 @@ server.registerTool(
     const mode = decision.conserve
       ? "CONSERVE MODE ON — batch questions into one prompt, prefer defaults, cut round-trips."
       : "Conserve mode off — behave normally.";
-    const verbose = isVerbose();
+    const verbose = isVerbose(store);
     const footer = verbose ? buildFooter(reading) : undefined;
     let text = `${decision.summary}\n${mode}\n${decision.reason}`;
     if (verbose && footer) {
@@ -199,6 +199,37 @@ server.registerTool(
 );
 
 server.registerTool(
+  "set_verbose",
+  {
+    title: "Enable/disable the per-message usage footer",
+    description:
+      "Persists verbose mode: when on, get_usage returns a footer the agent appends to every message " +
+      "(**Cursor Usage:** X/limit requests · $used/$limit). Overridden by the CURSOR_USAGE_VERBOSE env var if set.",
+    inputSchema: {
+      verbose: z.boolean(),
+    },
+  },
+  async ({ verbose }) => {
+    const store = loadStore();
+    store.verbose = verbose;
+    saveStore(store);
+    const envSet = typeof process.env.CURSOR_USAGE_VERBOSE === "string" && process.env.CURSOR_USAGE_VERBOSE.trim() !== "";
+    return {
+      content: [
+        {
+          type: "text",
+          text:
+            `Verbose mode persisted as ${verbose}.` +
+            (envSet
+              ? ` NOTE: CURSOR_USAGE_VERBOSE env is set and OVERRIDES this — effective verbose = ${isVerbose(store)}.`
+              : ""),
+        },
+      ],
+    };
+  },
+);
+
+server.registerTool(
   "status",
   {
     title: "Show cursor-usage configuration status",
@@ -220,6 +251,9 @@ server.registerTool(
               storedThresholdPct: store.activationThresholdPct,
               envThresholdPct: process.env.CURSOR_USAGE_THRESHOLD_PCT ?? null,
               effectiveThresholdPct: effectiveThreshold(store),
+              storedVerbose: store.verbose,
+              envVerbose: process.env.CURSOR_USAGE_VERBOSE ?? null,
+              effectiveVerbose: isVerbose(store),
             },
             null,
             2,

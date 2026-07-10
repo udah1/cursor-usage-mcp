@@ -76,6 +76,7 @@ reload the MCP) after `npm run build` so it picks up `dist/index.js`.
 | `login` | Browser login + endpoint auto-discovery. Re-run when the session expires. Reports current usage immediately. |
 | `logout` | Clears the stored session (cookie + endpoints). `forgetBrowser=true` also wipes the saved browser profile. |
 | `set_threshold` | Sets the persisted threshold (0-100). Default **0** = conserve whenever requests remain. Overridden by the `CURSOR_USAGE_THRESHOLD_PCT` env var if set. |
+| `set_verbose` | Enables/disables the per-message usage footer (persisted). Overridden by the `CURSOR_USAGE_VERBOSE` env var if set. |
 | `status` | Shows whether a session/endpoints are stored, capture time, and stored/env/effective threshold. |
 
 ## Tuning when conserve mode kicks in
@@ -115,6 +116,10 @@ to the end of every message:
 Footer format (only the label is bold):
 
 > **Cursor Usage:** 290/500 requests · $0.00/$75.00 _(~as of task start)_
+
+You can also toggle it at runtime without editing `mcp.json` via the **`set_verbose`** tool
+(persisted in `~/.cursor-usage`). The `CURSOR_USAGE_VERBOSE` env var, if set, **overrides** the tool
+value — remove it from `mcp.json` to control verbose purely via `set_verbose`.
 
 Notes: the numbers reflect the reading from the **start of the task** (not refreshed per message), and
 because appending a footer to every message is a model behavior, it may occasionally be missed.

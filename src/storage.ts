@@ -34,11 +34,14 @@ export interface Store {
    * Default 0 => conserve whenever a usage reading succeeds and requests remain.
    */
   activationThresholdPct: number;
+  /** Persisted verbose mode (append usage footer to every message). Default false. */
+  verbose: boolean;
 }
 
 const DEFAULT_STORE: Store = {
   endpoints: [],
   activationThresholdPct: 0,
+  verbose: false,
 };
 
 function ensureDir(): void {
@@ -106,10 +109,13 @@ export function effectiveThreshold(store: Store): number {
 }
 
 /**
- * Verbose mode (CURSOR_USAGE_VERBOSE env). When on, get_usage returns a footer line the agent
- * should append to every message. Default off.
+ * Effective verbose mode. The CURSOR_USAGE_VERBOSE env var takes precedence (and can force off,
+ * e.g. "false"/"0"); otherwise the value persisted by set_verbose is used. Default off.
  */
-export function isVerbose(): boolean {
+export function isVerbose(store: Store): boolean {
   const raw = process.env.CURSOR_USAGE_VERBOSE;
-  return typeof raw === "string" && /^(1|true|yes|on)$/i.test(raw.trim());
+  if (typeof raw === "string" && raw.trim() !== "") {
+    return /^(1|true|yes|on)$/i.test(raw.trim());
+  }
+  return store.verbose;
 }
