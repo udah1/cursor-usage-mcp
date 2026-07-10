@@ -26,3 +26,7 @@ If `get_usage` returns `needsLogin: true`, tell the user once to run the `login`
 Whenever you (or the user) run the `login` tool, IMMEDIATELY report the current usage it returns
 (included requests X/limit, percent used, and on-demand spend) in your reply — don't make the user
 ask for it separately.
+
+If `get_usage` returns `verbose: true`, end EVERY message you send for the rest of the task with the
+exact `footer` string it returned (a line beginning with **Cursor Usage:**). If `verbose` is false
+or absent, do not add the footer.

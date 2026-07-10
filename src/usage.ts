@@ -373,6 +373,23 @@ export function decideConserve(reading: UsageReading, thresholdPct: number): Con
   return base;
 }
 
+/** One-line footer for verbose mode. Only the "Cursor Usage:" label is bold. */
+export function buildFooter(r: UsageReading): string {
+  if (!r.ok) return "**Cursor Usage:** unavailable (run login)";
+  const bits: string[] = [];
+  if (r.includedRequests) {
+    bits.push(`${r.includedRequests.used}/${r.includedRequests.limit} requests`);
+  }
+  if (r.spend) {
+    bits.push(
+      r.spend.limitDollars !== null
+        ? `$${r.spend.usedDollars.toFixed(2)}/$${r.spend.limitDollars.toFixed(2)}`
+        : `$${r.spend.usedDollars.toFixed(2)} spent`,
+    );
+  }
+  return `**Cursor Usage:** ${bits.join(" · ")} _(~as of task start)_`;
+}
+
 export interface ModelUsage {
   model: string;
   costDollars: number;

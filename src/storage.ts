@@ -104,3 +104,12 @@ export function effectiveThreshold(store: Store): number {
   }
   return store.activationThresholdPct;
 }
+
+/**
+ * Verbose mode (CURSOR_USAGE_VERBOSE env). When on, get_usage returns a footer line the agent
+ * should append to every message. Default off.
+ */
+export function isVerbose(): boolean {
+  const raw = process.env.CURSOR_USAGE_VERBOSE;
+  return typeof raw === "string" && /^(1|true|yes|on)$/i.test(raw.trim());
+}

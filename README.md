@@ -103,6 +103,25 @@ Change the number and reload the MCP. Accepts `0`–`100`. Leave it as `"0"` (or
 default always-conserve behavior. If `CURSOR_USAGE_THRESHOLD_PCT` is set, it **overrides** any value
 set via the tool below.
 
+## Verbose mode (usage footer on every message)
+
+Set `CURSOR_USAGE_VERBOSE` to `true` in the `mcp.json` `env` to have the agent append a usage footer
+to the end of every message:
+
+```json
+"env": { "CURSOR_USAGE_VERBOSE": "true" }
+```
+
+Footer format (only the label is bold):
+
+> **Cursor Usage:** 290/500 requests · $0.00/$75.00 _(~as of task start)_
+
+Notes: the numbers reflect the reading from the **start of the task** (not refreshed per message), and
+because appending a footer to every message is a model behavior, it may occasionally be missed.
+Default is off.
+
+## Threshold, continued
+
 **2. `set_threshold` tool (persisted in `~/.cursor-usage`):**
 
 ```

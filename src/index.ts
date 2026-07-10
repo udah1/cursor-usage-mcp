@@ -2,8 +2,15 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { loadStore, saveStore, hasSession, effectiveThreshold, clearSession } from "./storage.js";
-import { getUsage, decideConserve, getUsageBreakdown } from "./usage.js";
+import {
+  loadStore,
+  saveStore,
+  hasSession,
+  effectiveThreshold,
+  clearSession,
+  isVerbose,
+} from "./storage.js";
+import { getUsage, decideConserve, getUsageBreakdown, buildFooter } from "./usage.js";
 import { runLogin } from "./login.js";
 
 const SERVER_INSTRUCTIONS = `cursor-usage: reads the current user's Cursor usage/spend from the dashboard's
@@ -44,10 +51,16 @@ server.registerTool(
     const mode = decision.conserve
       ? "CONSERVE MODE ON — batch questions into one prompt, prefer defaults, cut round-trips."
       : "Conserve mode off — behave normally.";
+    const verbose = isVerbose();
+    const footer = verbose ? buildFooter(reading) : undefined;
+    let text = `${decision.summary}\n${mode}\n${decision.reason}`;
+    if (verbose && footer) {
+      text += `\n\nVERBOSE MODE ON — end EVERY message you send this task with this exact line:\n${footer}`;
+    }
     return {
       content: [
-        { type: "text", text: `${decision.summary}\n${mode}\n${decision.reason}` },
-        { type: "text", text: JSON.stringify(decision, null, 2) },
+        { type: "text", text },
+        { type: "text", text: JSON.stringify({ ...decision, verbose, footer }, null, 2) },
       ],
     };
   },
