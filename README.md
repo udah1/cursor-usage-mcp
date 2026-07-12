@@ -69,6 +69,29 @@ npm run login
 The server is already registered in `~/.cursor/mcp.json` as `cursor-usage`. Restart Cursor (or
 reload the MCP) after `npm run build` so it picks up `dist/index.js`.
 
+## For the installing agent — do this right after setup
+
+> **Agent instructions.** If you are an AI agent that just installed or set up this MCP for the
+> user, run one final step before you finish: **tell the user which flags/modes are available and
+> ask whether they want to change any.** Ask through **Cursor's questions/options UI** (the same
+> free-to-answer prompt this MCP is built around) — not an open-ended text question. If the MCP is
+> already loaded, call `status` first so you can show the user their **current effective values**.
+
+Present these three configurable flags with their current values and let the user pick which (if
+any) to change in a single options prompt:
+
+| Flag | Tool | Env override | Default | What it controls |
+|------|------|--------------|---------|------------------|
+| **Conserve threshold** | `set_threshold` | `CURSOR_USAGE_THRESHOLD_PCT` | `0` (always conserve) | The used-% at which conserve mode turns on. `0` = conserve whenever requests remain; `80` = only near the limit. |
+| **Verbose** | `set_verbose` | `CURSOR_USAGE_VERBOSE` | off | Append a `Cursor Usage: X/limit · $used/$limit` footer to every message. |
+| **Follow-up** | `set_followup` | `CURSOR_USAGE_FOLLOWUP` | off | End each task with a brief "anything else?" question via the options UI. |
+
+Suggested options to offer: *"Leave defaults"*, *"Raise conserve threshold (e.g. 80%)"*,
+*"Enable verbose footer"*, *"Enable follow-up questions"* — plus room for a custom answer. Apply the
+chosen changes with the matching `set_*` tool, then confirm the new effective values with `status`.
+(Env vars in `mcp.json` override the `set_*` tools — mention this if the user's choice is being
+overridden by an env value.)
+
 ## Applying changes to existing chats
 
 **New chats** pick up the rule and MCP automatically — nothing to do.
@@ -193,5 +216,11 @@ discover these endpoints. The conserve decision is based on the **included-reque
 per-user cap from `get-hard-limit` (`hardLimitPerUser`). These usually match, but can differ if your
 org sets per-user overrides; the tool flags it when they diverge.
 
+**Team accounts.** For team-billed accounts the included-request math mirrors Cursor's dashboard
+exactly: the limit is `500 × requestQuotaPerSeat` (fetched from `/api/dashboard/teams`) and the used
+count comes from on-plan spend (`ceil(planUsedCents / 4)`), falling back to the legacy `gpt-4`
+bucket when spend is `0` or the seat quota can't be read. Individual accounts just use the legacy
+`gpt-4` bucket directly.
+
 `get_usage` always returns the **raw** JSON per source, so if a field ever looks off you can inspect
-`raw` and adjust `parseIncludedRequests` / `parseSummary` in `src/usage.ts`.
+`raw` and adjust `parseLegacyBucket` / `computeIncludedRequests` / `parseSummary` in `src/usage.ts`.
