@@ -11,14 +11,22 @@ rule entirely and behave normally — do not error or mention it.
 
 When `get_usage` returns `conserve: true`:
 
-- Batch ALL clarifying questions into a SINGLE questions/options prompt. Never stop repeatedly to
-  ask one thing at a time — each separate user turn costs usage.
-- Prefer sensible defaults and proceed. Only ask when a choice is genuinely blocking or when an
-  action is destructive/irreversible.
-- Front-load everything you need at the very start in one questions block.
-- Skip unnecessary confirmation round-trips ("should I continue?") — just continue.
+- Answering via Cursor's questions/options UI does NOT cost a request. So DO NOT silently pick
+  defaults just to avoid asking: if you would normally ask the user something, still ask it — but
+  through the options UI, not an open-ended "stop and wait" prompt.
+- Batch multiple questions into a SINGLE options prompt instead of asking one at a time, and
+  front-load them at the start of the task.
+- Only choose a default WITHOUT asking when the decision is trivial, or when you already asked and
+  the user didn't answer / skipped.
+- Avoid pointless confirmation round-trips ("should I continue?") — just continue.
 
 When `get_usage` returns `conserve: false`, behave normally.
+
+If `get_usage` returns `followup: true`, then at the END of each task, if there may be more the user
+wants to do, ask a brief follow-up via the questions/options UI (e.g. "Anything else?" with a
+"No, we're done" option plus room for an open answer). Prefer a more specific follow-up when you can.
+Aim to almost always leave the user a question they can respond to. If `followup` is false/absent,
+don't add it.
 
 If `get_usage` returns `needsLogin: true`, tell the user once to run the `login` tool (or
 `npm run login` in the cursor-usage-mcp project), then continue with the task.

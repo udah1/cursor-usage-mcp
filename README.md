@@ -10,8 +10,10 @@ This is a **local** MCP server that fixes that. It reads your **live** usage fro
 your Cursor dashboard uses, and hands the agent a `conserve` flag. When you're consuming your quota,
 a bundled rule makes the agent **conserve requests** by:
 
-- **batching all clarifying questions into a single prompt** (one turn instead of many),
-- **preferring sensible defaults** and proceeding instead of stopping to ask,
+- **routing questions through Cursor's questions/options UI** (answering it is free) instead of
+  open-ended "stop and wait" prompts — so it still asks what it needs, without burning a request,
+- **batching multiple questions into a single options prompt** (one turn instead of many),
+- **only defaulting silently when the choice is trivial** or you didn't answer,
 - **cutting needless confirmation round-trips** ("should I continue?").
 
 ### How it works (three pieces)
@@ -80,12 +82,10 @@ For a chat that was **already open** before you installed/updated this:
 
    ```
    From now on follow the conserve-requests rule: call the cursor-usage get_usage tool,
-   report my current usage, and if conserve is on — batch questions and prefer defaults.
+   report my current usage, and if conserve is on — ask via the questions UI (not open prompts),
+   batch questions, and only default on trivial choices.
    If verbose is on, end every message with the footer.
    ```
-
-There is no skill or API to broadcast a rule into already-open chats — the one-time MCP reload plus
-this nudge is the mechanism.
 
 ## Tools
 
@@ -97,7 +97,8 @@ this nudge is the mechanism.
 | `logout` | Clears the stored session (cookie + endpoints). `forgetBrowser=true` also wipes the saved browser profile. |
 | `set_threshold` | Sets the persisted threshold (0-100). Default **0** = conserve whenever requests remain. Overridden by the `CURSOR_USAGE_THRESHOLD_PCT` env var if set. |
 | `set_verbose` | Enables/disables the per-message usage footer (persisted). Overridden by the `CURSOR_USAGE_VERBOSE` env var if set. |
-| `status` | Shows whether a session/endpoints are stored, capture time, and stored/env/effective threshold. |
+| `set_followup` | Enables/disables the end-of-task "anything else?" follow-up question (persisted, default off). Overridden by the `CURSOR_USAGE_FOLLOWUP` env var if set. |
+| `status` | Shows whether a session/endpoints are stored, capture time, and stored/env/effective threshold, verbose, and follow-up settings. |
 
 ## Tuning when conserve mode kicks in
 
@@ -146,6 +147,23 @@ value — remove it from `mcp.json` to control verbose purely via `set_verbose`.
 Notes: the numbers reflect the reading from the **start of the task** (not refreshed per message), and
 because appending a footer to every message is a model behavior, it may occasionally be missed.
 Default is off.
+
+## Follow-up mode (end-of-task "anything else?" question)
+
+Independent of conserve/verbose. When on, `get_usage` tells the agent to **end each task with a brief
+follow-up question through Cursor's questions/options UI** — e.g. "Anything else?" with a "No, we're
+done" option plus room for an open answer (a more specific question when it fits). Because answering
+that UI is free, you almost always get a prompt you can respond to and keep the session going without
+spending an extra request to re-engage.
+
+Enable via env in `mcp.json`:
+
+```json
+"env": { "CURSOR_USAGE_FOLLOWUP": "true" }
+```
+
+Or toggle at runtime with the **`set_followup`** tool (persisted in `~/.cursor-usage`). The
+`CURSOR_USAGE_FOLLOWUP` env var, if set, **overrides** the tool value. **Default is off.**
 
 ## Threshold, continued
 

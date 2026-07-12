@@ -36,12 +36,15 @@ export interface Store {
   activationThresholdPct: number;
   /** Persisted verbose mode (append usage footer to every message). Default false. */
   verbose: boolean;
+  /** Persisted follow-up mode (end each task with a "anything else?" options question). Default false. */
+  followup: boolean;
 }
 
 const DEFAULT_STORE: Store = {
   endpoints: [],
   activationThresholdPct: 0,
   verbose: false,
+  followup: false,
 };
 
 function ensureDir(): void {
@@ -118,4 +121,16 @@ export function isVerbose(store: Store): boolean {
     return /^(1|true|yes|on)$/i.test(raw.trim());
   }
   return store.verbose;
+}
+
+/**
+ * Effective follow-up mode. CURSOR_USAGE_FOLLOWUP env takes precedence (can force off); otherwise
+ * the value persisted by set_followup is used. Default off.
+ */
+export function isFollowup(store: Store): boolean {
+  const raw = process.env.CURSOR_USAGE_FOLLOWUP;
+  if (typeof raw === "string" && raw.trim() !== "") {
+    return /^(1|true|yes|on)$/i.test(raw.trim());
+  }
+  return store.followup;
 }

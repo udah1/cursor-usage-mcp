@@ -9,6 +9,7 @@ import {
   effectiveThreshold,
   clearSession,
   isVerbose,
+  isFollowup,
 } from "./storage.js";
 import { getUsage, decideConserve, getUsageBreakdown, buildFooter } from "./usage.js";
 import { runLogin } from "./login.js";
@@ -17,12 +18,19 @@ const SERVER_INSTRUCTIONS = `cursor-usage: reads the current user's Cursor usage
 authenticated backend and tells you whether to conserve requests.
 
 REQUEST-CONSERVING POLICY (apply whenever the conserve flag from get_usage is true):
-- Batch ALL clarifying questions into a SINGLE questions/options prompt instead of stopping
-  repeatedly. Each separate user turn costs usage; one consolidated prompt costs far less.
-- Prefer sensible defaults and proceed, rather than asking. Only ask when a choice is genuinely
-  blocking or when an action is destructive/irreversible.
-- Front-load everything you need at the start of a task in one questions block.
-- Avoid unnecessary confirmation round-trips ("should I continue?"). Just continue.
+- Answering via Cursor's questions/options UI does NOT cost a request. So DO NOT silently pick
+  defaults just to avoid asking: if you would normally ask the user something, still ask it — but
+  through the options UI, not an open-ended "stop and wait" prompt.
+- Batch multiple questions into a SINGLE options prompt instead of asking one at a time.
+- Only choose a default WITHOUT asking when the decision is trivial, or when you already asked and the
+  user didn't answer / skipped.
+- Avoid pointless confirmation round-trips ("should I continue?").
+
+FOLLOW-UP MODE (apply whenever the followup flag from get_usage is true):
+- At the END of each task, if there might be more the user wants to do, ask a brief follow-up through
+  the options UI (e.g. "Anything else?" with a "No, we're done" option plus room for an open answer).
+  Prefer a more specific follow-up when you can. Aim to almost always leave the user a question they
+  can respond to.
 
 When the conserve flag is false, behave normally.
 
@@ -38,10 +46,11 @@ server.registerTool(
   {
     title: "Get Cursor usage + conserve decision",
     description:
-      "Call this at the START of a task. Reads the user's current Cursor usage/spend and returns a " +
-      "conserve flag. If conserve is true, batch all clarifying questions into ONE questions/options " +
-      "prompt, prefer sensible defaults, and avoid confirmation round-trips to save requests. If false, " +
-      "behave normally. If needsLogin is true, ask the user to run the 'login' tool.",
+      "Call this at the START of a task. Reads the user's current Cursor usage/spend and returns " +
+      "conserve + followup flags. If conserve is true, ask any real questions through the " +
+      "questions/options UI (free) instead of open-ended prompts or silent defaults, and batch them " +
+      "into one prompt. If followup is true, end each task with a brief 'anything else?' options " +
+      "question. If needsLogin is true, ask the user to run the 'login' tool.",
     inputSchema: {},
   },
   async () => {
@@ -52,15 +61,21 @@ server.registerTool(
       ? "CONSERVE MODE ON — batch questions into one prompt, prefer defaults, cut round-trips."
       : "Conserve mode off — behave normally.";
     const verbose = isVerbose(store);
+    const followup = isFollowup(store);
     const footer = verbose ? buildFooter(reading) : undefined;
     let text = `${decision.summary}\n${mode}\n${decision.reason}`;
     if (verbose && footer) {
       text += `\n\nVERBOSE MODE ON — end EVERY message you send this task with this exact code block:\n${footer}`;
     }
+    if (followup) {
+      text +=
+        `\n\nFOLLOW-UP MODE ON — at the end of this task, if there may be more the user wants to do, ` +
+        `ask a brief follow-up via the questions/options UI (e.g. "Anything else?" + a "No, we're done" option).`;
+    }
     return {
       content: [
         { type: "text", text },
-        { type: "text", text: JSON.stringify({ ...decision, verbose, footer }, null, 2) },
+        { type: "text", text: JSON.stringify({ ...decision, verbose, followup, footer }, null, 2) },
       ],
     };
   },
@@ -230,6 +245,38 @@ server.registerTool(
 );
 
 server.registerTool(
+  "set_followup",
+  {
+    title: "Enable/disable the end-of-task follow-up question",
+    description:
+      "Persists follow-up mode (default off): when on, get_usage tells the agent to end each task with " +
+      "a brief 'anything else?' question via the questions/options UI, so you almost always get a " +
+      "prompt you can respond to. Overridden by the CURSOR_USAGE_FOLLOWUP env var if set.",
+    inputSchema: {
+      followup: z.boolean(),
+    },
+  },
+  async ({ followup }) => {
+    const store = loadStore();
+    store.followup = followup;
+    saveStore(store);
+    const envSet = typeof process.env.CURSOR_USAGE_FOLLOWUP === "string" && process.env.CURSOR_USAGE_FOLLOWUP.trim() !== "";
+    return {
+      content: [
+        {
+          type: "text",
+          text:
+            `Follow-up mode persisted as ${followup}.` +
+            (envSet
+              ? ` NOTE: CURSOR_USAGE_FOLLOWUP env is set and OVERRIDES this — effective followup = ${isFollowup(store)}.`
+              : ""),
+        },
+      ],
+    };
+  },
+);
+
+server.registerTool(
   "status",
   {
     title: "Show cursor-usage configuration status",
@@ -254,6 +301,9 @@ server.registerTool(
               storedVerbose: store.verbose,
               envVerbose: process.env.CURSOR_USAGE_VERBOSE ?? null,
               effectiveVerbose: isVerbose(store),
+              storedFollowup: store.followup,
+              envFollowup: process.env.CURSOR_USAGE_FOLLOWUP ?? null,
+              effectiveFollowup: isFollowup(store),
             },
             null,
             2,
