@@ -80,77 +80,162 @@ function isSummaryEndpoint(url: string): boolean {
   return url.includes("/api/usage-summary");
 }
 
+/** Max time to wait for a single dashboard request before giving up. */
+const FETCH_TIMEOUT_MS = 8000;
+
 async function fetchJson(
   ep: CapturedEndpoint,
   cookieHeader: string,
 ): Promise<{ status: number; json?: any }> {
   const headers: Record<string, string> = { ...COMMON_HEADERS, Cookie: cookieHeader };
-  const init: RequestInit = { method: ep.method, headers };
+  const init: RequestInit = {
+    method: ep.method,
+    headers,
+    // Fail fast instead of hanging get_usage at the start of every task if the
+    // dashboard endpoint stalls. status 0 signals "no response" to callers.
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  };
   if (ep.method.toUpperCase() === "POST") {
     headers["Content-Type"] = ep.contentType ?? "application/json";
     init.body = ep.postData ?? "{}";
   }
-  const res = await fetch(ep.url, init);
-  if (!res.ok) return { status: res.status };
   try {
-    return { status: res.status, json: await res.json() };
+    const res = await fetch(ep.url, init);
+    if (!res.ok) return { status: res.status };
+    try {
+      return { status: res.status, json: await res.json() };
+    } catch {
+      return { status: res.status };
+    }
   } catch {
-    return { status: res.status };
+    // Timeout / network error: treat as "no response" so upstream falls back.
+    return { status: 0 };
   }
 }
 
+/** The raw legacy request bucket that Cursor's dashboard reads as `usage["gpt-4"]`. */
+export interface LegacyRequestBucket {
+  numRequests?: number;
+  maxRequestUsage?: number;
+}
+
 /**
- * Parse the /api/usage model map. Included-request usage is reported per model;
- * we take the entry with the largest quota (the plan's included-request limit).
+ * Extract the legacy request bucket from the /api/usage model map.
+ *
+ * Cursor's own dashboard does NOT iterate the model map — it hardcodes the
+ * `"gpt-4"` entry (its minified code literally names it `legacyGpt4Usage:
+ * G["gpt-4"]`). We mirror that: prefer the `"gpt-4"` key, and only if it's
+ * missing fall back to the quota-bearing bucket with the largest limit (a
+ * stable safety net if Cursor ever renames the legacy key).
  */
-function parseIncludedRequests(json: any): IncludedRequests | undefined {
+export function parseLegacyBucket(json: any): LegacyRequestBucket | undefined {
   if (!json || typeof json !== "object") return undefined;
-  let best: IncludedRequests | undefined;
+  const gpt4 = json["gpt-4"];
+  if (gpt4 && typeof gpt4 === "object" && typeof gpt4.numRequests === "number") {
+    return { numRequests: gpt4.numRequests, maxRequestUsage: gpt4.maxRequestUsage };
+  }
+  let best: LegacyRequestBucket | undefined;
+  let bestLimit = 0;
   for (const value of Object.values<any>(json)) {
     if (value && typeof value === "object" && typeof value.numRequests === "number") {
-      const limit = typeof value.maxRequestUsage === "number" ? value.maxRequestUsage : null;
-      if (limit && limit > 0) {
-        const used = value.numRequests;
-        const candidate: IncludedRequests = {
-          used,
-          limit,
-          remaining: Math.max(0, limit - used),
-          pct: Math.round((used / limit) * 1000) / 10,
-        };
-        if (!best || candidate.limit > best.limit) best = candidate;
+      const limit = typeof value.maxRequestUsage === "number" ? value.maxRequestUsage : 0;
+      if (limit > bestLimit) {
+        bestLimit = limit;
+        best = { numRequests: value.numRequests, maxRequestUsage: value.maxRequestUsage };
       }
     }
   }
   return best;
 }
 
-function centsToDollars(cents: unknown): number | null {
+/**
+ * Cursor converts included on-plan spend (in cents) to a request count at a flat
+ * rate. Mirrors the dashboard helper `getRequestCountFromSpendCents`, which is
+ * literally `e > 0 ? Math.ceil(e / 4) : 0` (≈ 4 cents per request).
+ */
+export function getRequestCountFromSpendCents(cents: unknown): number {
+  return typeof cents === "number" && cents > 0 ? Math.ceil(cents / 4) : 0;
+}
+
+/**
+ * Compute included-request usage exactly the way Cursor's dashboard does
+ * (see the deobfuscated `computeIncludedRequests` in the dashboard bundle):
+ *
+ *   used  = team ? (spendCents>0 ? ceil(cents/4) : legacy.numRequests) : legacy.numRequests
+ *   limit = team ? 500 * requestQuotaPerSeat : legacy.maxRequestUsage
+ *
+ * Any missing team signal falls back to the legacy `gpt-4` bucket, so individual
+ * accounts and teams whose seat quota we couldn't fetch still get a correct
+ * "X / limit". Returns undefined only when there's nothing usable at all.
+ */
+export function computeIncludedRequests(params: {
+  legacy?: LegacyRequestBucket;
+  isTeam?: boolean;
+  planUsedCents?: number;
+  requestQuotaPerSeat?: number;
+}): IncludedRequests | undefined {
+  const { legacy, isTeam, planUsedCents, requestQuotaPerSeat } = params;
+  const usedFromSpend =
+    typeof planUsedCents === "number" && planUsedCents > 0
+      ? getRequestCountFromSpendCents(planUsedCents)
+      : undefined;
+
+  const used = isTeam ? usedFromSpend ?? legacy?.numRequests : legacy?.numRequests;
+  const limit =
+    isTeam && typeof requestQuotaPerSeat === "number"
+      ? 500 * requestQuotaPerSeat
+      : legacy?.maxRequestUsage;
+
+  if (typeof used !== "number" || typeof limit !== "number" || limit <= 0) return undefined;
+  return {
+    used,
+    limit,
+    // Cursor caps the *displayed* used at the limit; we keep the true used but
+    // never report negative remaining.
+    remaining: Math.max(0, limit - used),
+    pct: Math.round((used / limit) * 1000) / 10,
+  };
+}
+
+/** Pull requestQuotaPerSeat for the active team from the /api/dashboard/teams response. */
+export function parseRequestQuotaPerSeat(json: any, teamId?: string): number | undefined {
+  if (!json || typeof json !== "object") return undefined;
+  const teams: any[] = Array.isArray(json.teams) ? json.teams : [];
+  const match =
+    (teamId ? teams.find((t) => String(t?.id) === String(teamId)) : undefined) ?? teams[0];
+  const q = match?.requestQuotaPerSeat ?? match?.request_quota_per_seat;
+  return typeof q === "number" && Number.isFinite(q) ? q : undefined;
+}
+
+export function centsToDollars(cents: unknown): number | null {
   return typeof cents === "number" ? Math.round((cents / 100) * 100) / 100 : null;
 }
 
-/** Parse /api/usage-summary for membership, unlimited flag, on-demand spend, and cycle dates. */
-function parseSummary(json: any): {
+interface ParsedSummary {
   membershipType?: string;
   isUnlimited?: boolean;
   spend?: SpendInfo;
   billingCycleStart?: string;
   billingCycleEnd?: string;
-} {
+  /** True when this account is billed as part of a team (limitType === "team"). */
+  isTeam?: boolean;
+  /** On-plan included spend in cents; Cursor derives team request counts from this. */
+  planUsedCents?: number;
+}
+
+/** Parse /api/usage-summary for membership, unlimited flag, on-demand spend, and cycle dates. */
+export function parseSummary(json: any): ParsedSummary {
   if (!json || typeof json !== "object") return {};
-  const out: {
-    membershipType?: string;
-    isUnlimited?: boolean;
-    spend?: SpendInfo;
-    billingCycleStart?: string;
-    billingCycleEnd?: string;
-  } = {};
+  const out: ParsedSummary = {};
   if (typeof json.membershipType === "string") out.membershipType = json.membershipType;
   if (typeof json.isUnlimited === "boolean") out.isUnlimited = json.isUnlimited;
   if (typeof json.billingCycleStart === "string") out.billingCycleStart = json.billingCycleStart;
   if (typeof json.billingCycleEnd === "string") out.billingCycleEnd = json.billingCycleEnd;
+  if (json.limitType === "team") out.isTeam = true;
 
   const onDemand = json?.individualUsage?.onDemand;
   const plan = json?.individualUsage?.plan;
+  if (typeof plan?.used === "number") out.planUsedCents = plan.used;
   if (onDemand && typeof onDemand === "object") {
     const usedDollars = centsToDollars(onDemand.used) ?? 0;
     const limitDollars = centsToDollars(onDemand.limit);
@@ -170,7 +255,7 @@ function parseSummary(json: any): {
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
-function computeCycle(start: string, end: string): BillingCycle | undefined {
+export function computeCycle(start: string, end: string): BillingCycle | undefined {
   const s = new Date(start).getTime();
   const e = new Date(end).getTime();
   if (!Number.isFinite(s) || !Number.isFinite(e) || e <= s) return undefined;
@@ -181,7 +266,7 @@ function computeCycle(start: string, end: string): BillingCycle | undefined {
   return { start, end, daysElapsed, daysLeft, cycleLengthDays };
 }
 
-function computePace(ir: IncludedRequests, cycle: BillingCycle): Pace {
+export function computePace(ir: IncludedRequests, cycle: BillingCycle): Pace {
   const elapsed = Math.max(0.5, cycle.daysElapsed); // avoid divide-by-zero early in cycle
   const requestsPerDay = Math.round((ir.used / elapsed) * 10) / 10;
   const projectedRequests = Math.round(requestsPerDay * cycle.cycleLengthDays);
@@ -209,53 +294,64 @@ export async function getUsage(store: Store): Promise<UsageReading> {
   const reading: UsageReading = { ok: false, sources: [], raw: {} };
   let sawAuthError = false;
   let lastError = "";
+  let legacy: LegacyRequestBucket | undefined;
+  let summaryParsed: ParsedSummary | undefined;
 
-  // Kick off the team per-user hard-limit fetch in parallel (context for the spend line).
+  // Kick off team-scoped fetches in parallel: the per-user hard limit (spend
+  // context) and the teams list (for requestQuotaPerSeat, which drives the real
+  // included-request limit for team accounts).
   const teamId = getTeamId(store);
+  const teamRequest = (url: string) =>
+    fetchJson(
+      {
+        url,
+        method: "POST",
+        postData: JSON.stringify(url.includes("/teams") ? { activeOnly: false } : { teamId: Number(teamId) }),
+        contentType: "application/json",
+      },
+      cookie,
+    ).catch(() => ({ status: 0 }) as { status: number; json?: any });
   const hardLimitPromise = teamId
-    ? fetchJson(
-        {
-          url: "https://cursor.com/api/dashboard/get-hard-limit",
-          method: "POST",
-          postData: JSON.stringify({ teamId: Number(teamId) }),
-          contentType: "application/json",
-        },
-        cookie,
-      ).catch(() => ({ status: 0 }) as { status: number; json?: any })
+    ? teamRequest("https://cursor.com/api/dashboard/get-hard-limit")
     : null;
+  const teamsPromise = teamId ? teamRequest("https://cursor.com/api/dashboard/teams") : null;
 
-  // 1) Included-request usage (the "X / 500" number).
+  // 1) Included-request usage (the "X / 500" number). We only extract the raw
+  //    legacy bucket here; the final number is computed below once we also know
+  //    whether this is a team account and its per-seat quota.
   const usageEp = store.endpoints.find((e) => isModelUsageEndpoint(e.url) && e.method === "GET");
   if (usageEp) {
     try {
       const { status, json } = await fetchJson(usageEp, cookie);
       if (status === 401 || status === 403) sawAuthError = true;
       else if (json) {
-        const parsed = parseIncludedRequests(json);
+        legacy = parseLegacyBucket(json);
         reading.raw.usage = json;
         reading.sources.push(usageEp.url);
-        if (parsed) reading.includedRequests = parsed;
       } else lastError = `HTTP ${status} from ${usageEp.url}`;
     } catch (err) {
       lastError = err instanceof Error ? err.message : String(err);
     }
   }
 
-  // 2) Summary (membership + on-demand spend/budget).
+  // 2) Summary (membership + on-demand spend/budget + team flag + plan spend).
   const summaryEp = store.endpoints.find((e) => isSummaryEndpoint(e.url) && e.method === "GET");
   if (summaryEp) {
     try {
       const { status, json } = await fetchJson(summaryEp, cookie);
       if (status === 401 || status === 403) sawAuthError = true;
       else if (json) {
-        const parsed = parseSummary(json);
+        summaryParsed = parseSummary(json);
         reading.raw.summary = json;
         reading.sources.push(summaryEp.url);
-        reading.membershipType = parsed.membershipType;
-        reading.isUnlimited = parsed.isUnlimited;
-        reading.spend = parsed.spend;
-        if (parsed.billingCycleStart && parsed.billingCycleEnd) {
-          reading.billingCycle = computeCycle(parsed.billingCycleStart, parsed.billingCycleEnd);
+        reading.membershipType = summaryParsed.membershipType;
+        reading.isUnlimited = summaryParsed.isUnlimited;
+        reading.spend = summaryParsed.spend;
+        if (summaryParsed.billingCycleStart && summaryParsed.billingCycleEnd) {
+          reading.billingCycle = computeCycle(
+            summaryParsed.billingCycleStart,
+            summaryParsed.billingCycleEnd,
+          );
         }
       } else if (!lastError) lastError = `HTTP ${status} from ${summaryEp.url}`;
     } catch (err) {
@@ -279,6 +375,32 @@ export async function getUsage(store: Store): Promise<UsageReading> {
       }
     }
   }
+
+  // 4) requestQuotaPerSeat from the teams list (team accounts only).
+  let requestQuotaPerSeat: number | undefined;
+  if (teamsPromise) {
+    const t = await teamsPromise;
+    if (t.json) {
+      requestQuotaPerSeat = parseRequestQuotaPerSeat(t.json, teamId);
+      if (requestQuotaPerSeat !== undefined && !reading.sources.includes("teams")) {
+        reading.sources.push("teams");
+      }
+    }
+  }
+
+  // Compute included requests the way the dashboard does, falling back to the
+  // raw legacy bucket when team signals are unavailable.
+  const isTeam = summaryParsed?.isTeam ?? Boolean(teamId);
+  reading.includedRequests =
+    computeIncludedRequests({
+      legacy,
+      isTeam,
+      planUsedCents: summaryParsed?.planUsedCents,
+      requestQuotaPerSeat,
+    }) ??
+    (legacy && typeof legacy.numRequests === "number" && typeof legacy.maxRequestUsage === "number"
+      ? computeIncludedRequests({ legacy, isTeam: false })
+      : undefined);
 
   // Burn-rate projection from included requests + cycle progress.
   if (reading.includedRequests && reading.billingCycle) {
@@ -307,7 +429,7 @@ export async function getUsage(store: Store): Promise<UsageReading> {
   };
 }
 
-function buildSummary(r: UsageReading): string {
+export function buildSummary(r: UsageReading): string {
   const parts: string[] = [];
   if (r.includedRequests) {
     const ir = r.includedRequests;
@@ -414,12 +536,31 @@ export interface UsageBreakdown {
   totalCacheWriteTokens: number;
 }
 
-/** Extract the numeric team id from the stored cookie or endpoint URLs. */
+/**
+ * Extract the numeric team id from the stored session. Checked in order:
+ * the cookie (`team_id=`), each endpoint URL (`teamId=`), and finally each
+ * endpoint's captured POST body (many dashboard endpoints send `teamId` there
+ * rather than in the URL, e.g. get-aggregated-usage-events).
+ */
 export function getTeamId(store: Store): string | undefined {
   const fromCookie = store.cookieHeader?.match(/team_id=(\d+)/)?.[1];
   if (fromCookie) return fromCookie;
   for (const ep of store.endpoints) {
-    const m = ep.url.match(/teamId=(\d+)/);
+    const fromUrl = ep.url.match(/teamId=(\d+)/)?.[1];
+    if (fromUrl) return fromUrl;
+  }
+  for (const ep of store.endpoints) {
+    if (!ep.postData) continue;
+    // Prefer structured parsing; fall back to a regex for non-JSON bodies.
+    try {
+      const parsed = JSON.parse(ep.postData);
+      const id = parsed?.teamId ?? parsed?.team_id;
+      if (typeof id === "number" && Number.isFinite(id)) return String(id);
+      if (typeof id === "string" && /^\d+$/.test(id)) return id;
+    } catch {
+      // not JSON; regex fallback below
+    }
+    const m = ep.postData.match(/"?team_?[Ii]d"?\s*[:=]\s*"?(\d+)"?/);
     if (m) return m[1];
   }
   return undefined;
