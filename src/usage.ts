@@ -531,7 +531,10 @@ export function buildFooter(r: UsageReading): string {
         : `$${r.spend.usedDollars.toFixed(2)} spent`,
     );
   }
-  return `${fence}\nCursor Usage: ${bits.join(" · ")} (~as of task start)\n${fence}`;
+  const now = new Date();
+  const hh = String(now.getHours()).padStart(2, "0");
+  const mm = String(now.getMinutes()).padStart(2, "0");
+  return `${fence}\nCursor Usage: ${bits.join(" · ")} (as of ${hh}:${mm})\n${fence}`;
 }
 
 export interface ModelUsage {
