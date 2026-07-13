@@ -35,7 +35,9 @@ FOLLOW-UP MODE (apply whenever the followup flag from get_usage is true):
 
 When the conserve flag is false, behave normally.
 
-If get_usage reports needsLogin, tell the user to run the 'login' tool (or 'npm run login').`;
+Auth is automatic: get_usage reads Cursor's local token, so no login is normally needed. Only if it
+reports needsLogin (e.g. the MCP runs on a different machine than Cursor) tell the user to make sure
+Cursor is open and logged in on this machine, or to run the 'login' tool (or 'npm run login').`;
 
 const server = new McpServer(
   { name: "cursor-usage", version: "0.1.0" },
@@ -51,7 +53,8 @@ server.registerTool(
       "conserve + followup flags. If conserve is true, ask any real questions through the " +
       "questions/options UI (free) instead of open-ended prompts or silent defaults, and batch them " +
       "into one prompt. If followup is true, end each task with a brief 'anything else?' options " +
-      "question. If needsLogin is true, ask the user to run the 'login' tool.",
+      "question. Auth is automatic (reads Cursor's local token); if needsLogin is true, ask the user " +
+      "to ensure Cursor is open/logged in on this machine, or to run the 'login' tool.",
     inputSchema: {},
   },
   async () => {
@@ -85,11 +88,13 @@ server.registerTool(
 server.registerTool(
   "login",
   {
-    title: "Log in to Cursor and capture usage endpoint",
+    title: "Log in to Cursor and capture usage endpoint (fallback auth)",
     description:
-      "Opens a real browser window. Log in to Cursor and open your usage/dashboard page. The tool " +
-      "auto-discovers the usage endpoint and stores your session cookie locally (~/.cursor-usage). " +
-      "Re-run this whenever get_usage reports the session expired.",
+      "FALLBACK auth only. By default get_usage needs no login — it reads Cursor's local token from " +
+      "state.vscdb. Use this tool only when that can't work: the MCP runs on a different machine than " +
+      "Cursor, the local DB is unreadable, node:sqlite is unavailable, or CURSOR_USAGE_FORCE_LOGIN is set. " +
+      "It opens a real browser, you log in, and it auto-discovers the usage endpoints and stores your " +
+      "session cookie locally (~/.cursor-usage).",
     inputSchema: {
       timeoutSeconds: z
         .number()
