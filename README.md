@@ -18,8 +18,9 @@ a bundled rule makes the agent **conserve requests** by:
 
 ### How it works (three pieces)
 
-1. **`login`** (one-time) — opens a browser via Playwright, you log into Cursor, and it captures
-   your session cookie + auto-discovers the usage endpoints, storing them at `~/.cursor-usage/`.
+1. **Auth (zero-setup by default)** — `get_usage` reconstructs your dashboard session from the token
+   Cursor already stores locally, so on most machines there's **nothing to log in to**. A browser
+   `login` flow exists only as a fallback. See [Authentication](#authentication) below.
 2. **`get_usage`** — makes a direct authenticated API call (no browser) and returns your
    included-request usage (e.g. `278/500`), on-demand spend (`$0/$75`), and a `conserve` decision
    computed against a threshold.
@@ -31,43 +32,68 @@ requests; `80` = only conserve once you've used 80% of the quota. See
 [Tuning](#tuning-when-conserve-mode-kicks-in) below.
 
 > **Heads up / caveats**
-> - This scrapes an **undocumented internal Cursor endpoint** (the same one your dashboard calls).
->   It can change without notice and may be against Cursor's ToS to script against. Personal,
+> - This calls **undocumented internal Cursor endpoints** (the same ones your dashboard calls).
+>   They can change without notice and may be against Cursor's ToS to script against. Personal,
 >   read-only use only.
-> - Your **session cookie** is stored locally at `~/.cursor-usage/store.json` (chmod 600) and is
->   never committed. It **expires periodically** — just re-run `login` when that happens.
-
-## How it works
-
-1. **`login`** opens a real Chromium window (via Playwright). You log in to Cursor normally and
-   open your usage/dashboard page. While the page loads, the server **sniffs the network**, finds
-   the JSON endpoint that returns your usage numbers, and saves both that endpoint and your
-   session cookie to `~/.cursor-usage/`.
-2. **`get_usage`** replays that request with your stored cookie, parses out `used` / `limit` /
-   `usedPct`, and returns a **`conserve`** flag based on your `activationThresholdPct`.
-3. A globally-installed rule (`~/.cursor/rules/conserve-requests.mdc`) tells the agent to call
-   `get_usage` at the start of each task and follow the conserve policy when the flag is on.
+> - The default auth path reads Cursor's local token **read-only** and never stores it. The optional
+>   `login` fallback stores a session cookie at `~/.cursor-usage/store.json` (chmod 600, never
+>   committed) that expires periodically — re-run `login` when that happens.
 
 ## Setup
 
 ```bash
 cd cursor-usage-mcp
 npm install
-npx playwright install chromium   # one-time: downloads the browser Playwright drives
+npx playwright install chromium   # optional: only needed for the browser `login` fallback
 npm run build
 ```
 
-First-time login (either works):
+The server is already registered in `~/.cursor/mcp.json` as `cursor-usage`. Restart Cursor (or
+reload the MCP) after `npm run build` so it picks up `dist/index.js`. With the default local-token
+auth there's **no login step** — just call `get_usage`.
+
+## Authentication
+
+By default the server needs **no login**. Cursor keeps its own auth in
+`…/Cursor/User/globalStorage/state.vscdb` (a SQLite key/value store) under
+`ItemTable → cursorAuth/accessToken` — a JWT whose `sub` claim is your user id. The dashboard's
+session cookie has a fixed shape:
+
+```
+WorkosCursorSessionToken=<userSub>::<accessToken>
+```
+
+where `userSub` is the JWT `sub` with any `auth0|` prefix stripped. `get_usage` reads that file
+read-only (via Node's built-in `node:sqlite`), rebuilds the exact cookie the browser would send, and
+also picks up your `teamId` from `cursorAuth/cachedTeam`. Nothing is written and the token is never
+stored. Because the token rotates, it's re-read on every call.
+
+**Cross-platform.** The `state.vscdb` location is derived from the OS:
+
+| OS | Path |
+|----|------|
+| macOS | `~/Library/Application Support/Cursor/User/globalStorage/state.vscdb` |
+| Windows | `%APPDATA%\Cursor\User\globalStorage\state.vscdb` |
+| Linux | `${XDG_CONFIG_HOME:-~/.config}/Cursor/User/globalStorage/state.vscdb` |
+
+Override with `CURSOR_STATE_DB=/abs/path/state.vscdb` for non-standard installs.
+
+**When the local path can't be used** — the server automatically falls back to the browser `login`
+flow. This happens if: the MCP runs on a **different machine** than Cursor (no local DB), the file
+isn't readable, `node:sqlite` is unavailable (Node < 22.5), or you set `CURSOR_USAGE_FORCE_LOGIN=1`.
+
+Browser `login` fallback (either works):
 
 ```bash
-# call the `login` tool from inside Cursor once the MCP is loaded (Simply by asking log into cursor-usage)
+# call the `login` tool from inside Cursor (just ask it to "log into cursor-usage")
 
 # — or — standalone CLI flow
 npm run login
 ```
 
-The server is already registered in `~/.cursor/mcp.json` as `cursor-usage`. Restart Cursor (or
-reload the MCP) after `npm run build` so it picks up `dist/index.js`.
+`login` opens a real Chromium window (Playwright), sniffs the network to discover the usage
+endpoints, and saves them plus your session cookie to `~/.cursor-usage/`. Run `status` any time to
+see which auth source is active (`local-token` vs `login`).
 
 ## For the installing agent — do this right after setup
 
@@ -116,12 +142,12 @@ For a chat that was **already open** before you installed/updated this:
 |------|--------------|
 | `get_usage` | Reads usage and returns the conserve decision. Call at task start. Includes included-request count, on-demand spend, plan, **billing-cycle reset + days left**, and a **burn-rate projection** (requests/day → projected total by reset). |
 | `usage_breakdown` | This cycle's usage broken down **by model**: cost, request count, and token totals (input/output/cache). Heavier than `get_usage`; call on request. |
-| `login` | Browser login + endpoint auto-discovery. Re-run when the session expires. Reports current usage immediately. |
-| `logout` | Clears the stored session (cookie + endpoints). `forgetBrowser=true` also wipes the saved browser profile. |
+| `login` | **Fallback** browser login + endpoint auto-discovery (only needed when the local-token path can't be used). Reports current usage immediately. |
+| `logout` | Clears the stored `login` session (cookie + endpoints). Does not affect the local-token path. `forgetBrowser=true` also wipes the saved browser profile. |
 | `set_threshold` | Sets the persisted threshold (0-100). Default **0** = conserve whenever requests remain. Overridden by the `CURSOR_USAGE_THRESHOLD_PCT` env var if set. |
 | `set_verbose` | Enables/disables the per-message usage footer (persisted). Overridden by the `CURSOR_USAGE_VERBOSE` env var if set. |
 | `set_followup` | Enables/disables the end-of-task "anything else?" follow-up question (persisted, default off). Overridden by the `CURSOR_USAGE_FOLLOWUP` env var if set. |
-| `status` | Shows whether a session/endpoints are stored, capture time, and stored/env/effective threshold, verbose, and follow-up settings. |
+| `status` | Shows the active **auth source** (`local-token` vs `login`) and local-token details (state.vscdb path, teamId, token expiry), whether a login session is stored, capture time, and stored/env/effective threshold, verbose, and follow-up settings. |
 
 ## Tuning when conserve mode kicks in
 
@@ -201,15 +227,16 @@ Used only when the env var is unset/empty. Run `status` to see `storedThresholdP
 
 ## How usage is read (no browser at query time)
 
-`get_usage` does **not** open a browser. It makes direct authenticated `GET` requests (with your
-stored cookie) to the two reliable dashboard endpoints:
+`get_usage` does **not** open a browser. It makes direct authenticated requests (with the cookie
+from the [local token](#authentication), or the stored `login` cookie) to the dashboard endpoints:
 
-- **`/api/usage`** → included-request count (`gpt-4.numRequests` / `maxRequestUsage`), e.g. `278/500`.
-- **`/api/usage-summary`** → `membershipType`, `isUnlimited`, and on-demand spend (`individualUsage.onDemand`, cents → dollars).
+- **`/api/usage?user=<sub>`** → included-request count (`gpt-4.numRequests` / `maxRequestUsage`), e.g. `278/500`.
+- **`/api/usage-summary`** → `membershipType`, `isUnlimited`, `limitType`, on-plan spend (`individualUsage.plan.used`), and on-demand spend (`individualUsage.onDemand`, cents → dollars).
+- **`/api/dashboard/teams`** (team accounts) → `requestQuotaPerSeat`.
+- **`/api/dashboard/get-hard-limit`** (team accounts) → per-user `$` cap for context.
 
-The browser (Playwright) is used **only during `login`** to capture your session cookie and
-discover these endpoints. The conserve decision is based on the **included-request percentage**
-(the "X / 500" number).
+The browser (Playwright) is used **only during the `login` fallback**. The conserve decision is
+based on the **included-request percentage** (the "X / 500" number).
 
 **Budget vs. team cap.** The spend line reports your **actual** on-demand budget from
 `individualUsage.onDemand.limit` (authoritative for you), and — for context — the team-wide default

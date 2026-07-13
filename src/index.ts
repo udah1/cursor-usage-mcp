@@ -13,6 +13,7 @@ import {
 } from "./storage.js";
 import { getUsage, decideConserve, getUsageBreakdown, buildFooter } from "./usage.js";
 import { runLogin } from "./login.js";
+import { findStateDb, readLocalSession } from "./token.js";
 
 const SERVER_INSTRUCTIONS = `cursor-usage: reads the current user's Cursor usage/spend from the dashboard's
 authenticated backend and tells you whether to conserve requests.
@@ -285,12 +286,20 @@ server.registerTool(
   },
   async () => {
     const store = loadStore();
+    const local = await readLocalSession();
     return {
       content: [
         {
           type: "text",
           text: JSON.stringify(
             {
+              authSource: local ? "local-token" : hasSession(store) ? "login" : "none",
+              localToken: {
+                available: Boolean(local),
+                stateDbPath: findStateDb() ?? null,
+                teamId: local?.teamId ?? null,
+                expiresAt: local?.expEpoch ? new Date(local.expEpoch * 1000).toISOString() : null,
+              },
               hasSession: hasSession(store),
               capturedAt: store.capturedAt ?? null,
               endpointCount: store.endpoints.length,

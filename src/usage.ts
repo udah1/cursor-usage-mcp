@@ -1,4 +1,5 @@
-import { hasSession, type CapturedEndpoint, type Store } from "./storage.js";
+import { type CapturedEndpoint, type Store } from "./storage.js";
+import { readLocalSession } from "./token.js";
 
 export interface IncludedRequests {
   used: number;
@@ -50,6 +51,8 @@ export interface UsageReading {
   pace?: Pace;
   /** Endpoints that produced data. */
   sources: string[];
+  /** How the session was obtained: "local-token" (state.vscdb) or "login" (stored cookie). */
+  authSource?: "local-token" | "login";
   /** Raw JSON per source so the agent can inspect if needed. */
   raw: Record<string, unknown>;
 }
@@ -74,10 +77,6 @@ function isModelUsageEndpoint(url: string): boolean {
   // Matches https://cursor.com/api/usage and https://cursor.com/api/usage?user=...
   // but NOT /api/usage-summary.
   return /\/api\/usage(\?|$)/.test(url);
-}
-
-function isSummaryEndpoint(url: string): boolean {
-  return url.includes("/api/usage-summary");
 }
 
 /** Max time to wait for a single dashboard request before giving up. */
@@ -279,28 +278,47 @@ export function computePace(ir: IncludedRequests, cycle: BillingCycle): Pace {
   };
 }
 
+/** Pull the `?user=` value out of a stored usage endpoint URL (login-path fallback). */
+function userSubFromEndpoints(store: Store): string | undefined {
+  for (const e of store.endpoints) {
+    const m = e.url.match(/[?&]user=([^&]+)/);
+    if (m) return decodeURIComponent(m[1]);
+  }
+  return undefined;
+}
+
 export async function getUsage(store: Store): Promise<UsageReading> {
-  if (!hasSession(store)) {
+  // Prefer Cursor's own local token (no browser); fall back to a stored login.
+  const local = await readLocalSession();
+  const cookie = local?.cookie ?? store.cookieHeader;
+  if (!cookie) {
     return {
       ok: false,
       needsLogin: true,
-      error: "No session/endpoints stored. Run the 'login' tool first.",
+      error:
+        "No Cursor session found. Open Cursor logged in on this machine, or run the 'login' tool.",
       sources: [],
       raw: {},
     };
   }
 
-  const cookie = store.cookieHeader!;
-  const reading: UsageReading = { ok: false, sources: [], raw: {} };
+  const reading: UsageReading = {
+    ok: false,
+    sources: [],
+    authSource: local ? "local-token" : "login",
+    raw: {},
+  };
   let sawAuthError = false;
   let lastError = "";
   let legacy: LegacyRequestBucket | undefined;
   let summaryParsed: ParsedSummary | undefined;
 
+  const teamId = local?.teamId ?? getTeamId(store);
+  const userSub = local?.userSub ?? userSubFromEndpoints(store);
+
   // Kick off team-scoped fetches in parallel: the per-user hard limit (spend
   // context) and the teams list (for requestQuotaPerSeat, which drives the real
   // included-request limit for team accounts).
-  const teamId = getTeamId(store);
   const teamRequest = (url: string) =>
     fetchJson(
       {
@@ -318,25 +336,28 @@ export async function getUsage(store: Store): Promise<UsageReading> {
 
   // 1) Included-request usage (the "X / 500" number). We only extract the raw
   //    legacy bucket here; the final number is computed below once we also know
-  //    whether this is a team account and its per-seat quota.
-  const usageEp = store.endpoints.find((e) => isModelUsageEndpoint(e.url) && e.method === "GET");
-  if (usageEp) {
+  //    whether this is a team account and its per-seat quota. The endpoint is
+  //    canonical when we know the user id; otherwise we replay the stored one.
+  const usageUrl = userSub
+    ? `https://cursor.com/api/usage?user=${encodeURIComponent(userSub)}`
+    : store.endpoints.find((e) => isModelUsageEndpoint(e.url) && e.method === "GET")?.url;
+  if (usageUrl) {
     try {
-      const { status, json } = await fetchJson(usageEp, cookie);
+      const { status, json } = await fetchJson({ url: usageUrl, method: "GET" }, cookie);
       if (status === 401 || status === 403) sawAuthError = true;
       else if (json) {
         legacy = parseLegacyBucket(json);
         reading.raw.usage = json;
-        reading.sources.push(usageEp.url);
-      } else lastError = `HTTP ${status} from ${usageEp.url}`;
+        reading.sources.push(usageUrl);
+      } else lastError = `HTTP ${status} from ${usageUrl}`;
     } catch (err) {
       lastError = err instanceof Error ? err.message : String(err);
     }
   }
 
   // 2) Summary (membership + on-demand spend/budget + team flag + plan spend).
-  const summaryEp = store.endpoints.find((e) => isSummaryEndpoint(e.url) && e.method === "GET");
-  if (summaryEp) {
+  const summaryEp = { url: "https://cursor.com/api/usage-summary", method: "GET" };
+  {
     try {
       const { status, json } = await fetchJson(summaryEp, cookie);
       if (status === 401 || status === 403) sawAuthError = true;
@@ -582,11 +603,17 @@ export async function getUsageBreakdown(store: Store): Promise<UsageBreakdown> {
     totalCacheReadTokens: 0,
     totalCacheWriteTokens: 0,
   };
-  if (!hasSession(store)) {
-    return { ...empty, needsLogin: true, error: "No session stored. Run the 'login' tool first." };
+  const local = await readLocalSession();
+  const cookie = local?.cookie ?? store.cookieHeader;
+  if (!cookie) {
+    return {
+      ...empty,
+      needsLogin: true,
+      error: "No Cursor session found. Open Cursor logged in, or run the 'login' tool.",
+    };
   }
-  const teamId = getTeamId(store);
-  if (!teamId) return { ...empty, error: "Could not determine team id from the stored session." };
+  const teamId = local?.teamId ?? getTeamId(store);
+  if (!teamId) return { ...empty, error: "Could not determine team id for this account." };
 
   const ep: CapturedEndpoint = {
     url: "https://cursor.com/api/dashboard/get-aggregated-usage-events",
@@ -595,7 +622,7 @@ export async function getUsageBreakdown(store: Store): Promise<UsageBreakdown> {
     contentType: "application/json",
   };
   try {
-    const { status, json } = await fetchJson(ep, store.cookieHeader!);
+    const { status, json } = await fetchJson(ep, cookie);
     if (status === 401 || status === 403) {
       return { ...empty, needsLogin: true, error: `Session expired (HTTP ${status}). Re-run 'login'.` };
     }
