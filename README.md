@@ -17,9 +17,10 @@ a bundled rule makes the agent **conserve requests** by:
 - **only defaulting silently when the choice is trivial** or you didn't answer,
 - **cutting needless confirmation round-trips** ("should I continue?").
 
-When your included quota is **used up**, `get_usage` returns `exhausted: true` and the agent stops to
-warn you that further work now bills to **on-demand $** and asks for explicit approval before
-continuing — rather than quietly racking up paid usage.
+When your included quota is **used up**, `get_usage` returns `exhausted: true`. On a corporate/team
+plan (usage moves to on-demand, covered by the org — not out of your pocket) the agent simply **tells
+you once** that the 500 are used up and it's on on-demand, then **continues normally** — no approval
+prompts and no more conserving, since there's nothing left to conserve.
 
 ### How it works (three pieces)
 
@@ -145,7 +146,7 @@ For a chat that was **already open** before you installed/updated this:
 
 | Tool | What it does |
 |------|--------------|
-| `get_usage` | Reads usage and returns the conserve decision + an **`exhausted`** flag (included quota used up → further work bills to on-demand $). Call at task start. Includes included-request count, on-demand spend, plan, **billing-cycle reset + days left**, and a **burn-rate projection** (requests/day → projected total by reset). |
+| `get_usage` | Reads usage and returns the conserve decision + an **`exhausted`** flag (included quota used up → on-demand, corp-covered; agent just notifies once and continues). Call at task start. Includes included-request count, on-demand spend, plan, **billing-cycle reset + days left**, and a **burn-rate projection** (requests/day → projected total by reset). |
 | `usage_breakdown` | This cycle's usage broken down **by model**: cost, request count, and token totals (input/output/cache). Heavier than `get_usage`; call on request. |
 | `login` | **Fallback** browser login + endpoint auto-discovery (only needed when the local-token path can't be used). Reports current usage immediately. |
 | `logout` | Clears the stored `login` session (cookie + endpoints). Does not affect the local-token path. `forgetBrowser=true` also wipes the saved browser profile. |

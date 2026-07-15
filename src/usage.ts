@@ -61,10 +61,11 @@ export interface ConserveDecision extends UsageReading {
   activationThresholdPct: number;
   conserve: boolean;
   /**
-   * Included-request quota is used up (0 left / ≥100%). Beyond this point every
-   * real assistant turn bills to on-demand $ — asking a question is still free,
-   * but doing work is NOT. Callers should warn the user and get explicit
-   * approval before continuing billable work.
+   * Included-request quota is used up (0 left / ≥100%). On corporate/team plans
+   * this just means usage moved to on-demand, which the org covers — the user
+   * doesn't pay out of pocket. Callers should notify the user ONCE and then
+   * continue normally (no approval, no extra conserving — there's nothing left
+   * to conserve).
    */
   exhausted: boolean;
   reason: string;
@@ -519,22 +520,23 @@ export function decideConserve(reading: UsageReading, thresholdPct: number): Con
     return base;
   }
 
-  // Exhausted = no included requests left. From here, every real turn bills to
-  // on-demand $, so we force conserve on and flag it distinctly regardless of
-  // threshold.
+  // Exhausted = no included requests left. On a corporate/team plan the user
+  // doesn't pay out of pocket, so there's nothing left to conserve: turn conserve
+  // OFF and just flag it so the caller notifies the user once, then continues.
   const ir = reading.includedRequests;
   base.exhausted = ir ? ir.remaining <= 0 : pct >= 100;
   if (base.exhausted) {
-    base.conserve = true;
+    base.conserve = false;
     const spend = reading.spend
       ? ` On-demand so far: $${reading.spend.usedDollars.toFixed(2)}${
           reading.spend.limitDollars !== null ? `/$${reading.spend.limitDollars.toFixed(2)}` : ""
         }.`
       : "";
     base.reason =
-      `Included requests EXHAUSTED (${pct}% used, ${ir?.remaining ?? 0} left).${spend} ` +
-      `Further work now bills to on-demand $ — asking is free, but doing work is not. ` +
-      `Warn the user and get explicit approval before continuing billable work.`;
+      `Included requests used up (${pct}%, ${ir?.remaining ?? 0} left).${spend} ` +
+      `Now on on-demand (covered by the org — not the user's own money). ` +
+      `No approval or extra conserving needed: just tell the user ONCE that the 500 are used up and ` +
+      `you've moved to on-demand, then continue normally.`;
     return base;
   }
 
