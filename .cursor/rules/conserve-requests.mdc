@@ -11,14 +11,25 @@ rule entirely and behave normally — do not error or mention it.
 
 When `get_usage` returns `conserve: true`:
 
-- Answering via Cursor's questions/options UI does NOT cost a request. So DO NOT silently pick
-  defaults just to avoid asking: if you would normally ask the user something, still ask it — but
-  through the options UI, not an open-ended "stop and wait" prompt.
+- Asking a question via Cursor's questions/options UI does NOT cost a request — but DOING the work
+  (edits, tool calls, a normal answer turn) DOES. "Free" applies only to the clarifying question, not
+  to continuing the task. Never treat "questions are free" as "I can keep working for free."
+- So DO NOT silently pick defaults just to avoid asking: if you would normally ask the user something,
+  still ask it — through the options UI, not an open-ended "stop and wait" prompt.
 - Batch multiple questions into a SINGLE options prompt instead of asking one at a time, and
   front-load them at the start of the task.
 - Only choose a default WITHOUT asking when the decision is trivial, or when you already asked and
   the user didn't answer / skipped.
 - Avoid pointless confirmation round-trips ("should I continue?") — just continue.
+
+When `get_usage` returns `exhausted: true`, the included-request quota (e.g. 500) is USED UP and every
+further real turn now bills to on-demand $:
+
+- STOP. Tell the user plainly that their included requests are gone and any more work is paid, and
+  show the current on-demand spend from the reading.
+- Get EXPLICIT approval before doing any more billable work. Ask via the options UI (that ask is free),
+  e.g. "Included requests are used up — continue on paid on-demand? Yes / No, stop here".
+- Do NOT keep working just because questions are free — the work itself costs money now.
 
 When `get_usage` returns `conserve: false`, behave normally.
 

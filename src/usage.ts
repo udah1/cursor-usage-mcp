@@ -60,6 +60,13 @@ export interface UsageReading {
 export interface ConserveDecision extends UsageReading {
   activationThresholdPct: number;
   conserve: boolean;
+  /**
+   * Included-request quota is used up (0 left / ≥100%). Beyond this point every
+   * real assistant turn bills to on-demand $ — asking a question is still free,
+   * but doing work is NOT. Callers should warn the user and get explicit
+   * approval before continuing billable work.
+   */
+  exhausted: boolean;
   reason: string;
   /** One-line human summary of the reading. */
   summary: string;
@@ -484,6 +491,7 @@ export function decideConserve(reading: UsageReading, thresholdPct: number): Con
     ...reading,
     activationThresholdPct: thresholdPct,
     conserve: false,
+    exhausted: false,
     reason: "",
     summary: buildSummary(reading),
   };
@@ -508,6 +516,25 @@ export function decideConserve(reading: UsageReading, thresholdPct: number): Con
   if (typeof pct !== "number") {
     base.conserve = thresholdPct === 0;
     base.reason = `Usage read but no percentage available. ${base.conserve ? "Conserving by default (threshold 0)." : "Not conserving."}`;
+    return base;
+  }
+
+  // Exhausted = no included requests left. From here, every real turn bills to
+  // on-demand $, so we force conserve on and flag it distinctly regardless of
+  // threshold.
+  const ir = reading.includedRequests;
+  base.exhausted = ir ? ir.remaining <= 0 : pct >= 100;
+  if (base.exhausted) {
+    base.conserve = true;
+    const spend = reading.spend
+      ? ` On-demand so far: $${reading.spend.usedDollars.toFixed(2)}${
+          reading.spend.limitDollars !== null ? `/$${reading.spend.limitDollars.toFixed(2)}` : ""
+        }.`
+      : "";
+    base.reason =
+      `Included requests EXHAUSTED (${pct}% used, ${ir?.remaining ?? 0} left).${spend} ` +
+      `Further work now bills to on-demand $ — asking is free, but doing work is not. ` +
+      `Warn the user and get explicit approval before continuing billable work.`;
     return base;
   }
 
