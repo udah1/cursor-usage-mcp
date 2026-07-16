@@ -1,4 +1,9 @@
-import { type CapturedEndpoint, type Store } from "./storage.js";
+import {
+  type CapturedEndpoint,
+  type Store,
+  loadCacheFile,
+  saveCacheFile,
+} from "./storage.js";
 import { readLocalSession } from "./token.js";
 
 export interface IncludedRequests {
@@ -55,6 +60,10 @@ export interface UsageReading {
   authSource?: "local-token" | "login";
   /** Raw JSON per source so the agent can inspect if needed. */
   raw: Record<string, unknown>;
+  /** True when this reading was served from cache rather than a fresh fetch. */
+  cached?: boolean;
+  /** ISO timestamp of the underlying fetch (== now for fresh reads, older for cached). */
+  fetchedAt?: string;
 }
 
 export interface ConserveDecision extends UsageReading {
@@ -458,6 +467,63 @@ export async function getUsage(store: Store): Promise<UsageReading> {
   };
 }
 
+/**
+ * Whether a reading represents an exhausted included-request quota (0 left).
+ * Exhaustion can't reverse within a billing cycle (used only rises), which is what
+ * makes caching safe until the cycle resets.
+ */
+export function readingExhausted(r: UsageReading): boolean {
+  if (!r.ok || r.isUnlimited) return false;
+  const ir = r.includedRequests;
+  if (ir) return ir.remaining <= 0;
+  const pct = r.spend?.pctUsed;
+  return typeof pct === "number" && pct >= 100;
+}
+
+interface UsageCache {
+  fetchedAt: string;
+  /** billingCycleEnd ISO, so the cache auto-invalidates when the cycle resets. */
+  cycleEnd?: string;
+  reading: UsageReading;
+}
+
+/** Safety-net TTL for the exhausted state: re-check at most once/day even before reset. */
+const EXHAUSTED_TTL_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * get_usage with caching. Once the included quota is exhausted, the decision can't
+ * change until the cycle resets, so we serve the cached reading (avoiding a network
+ * call on every task) until either the billing cycle end passes or the daily TTL
+ * elapses. Below the limit we always fetch fresh, since crossing the threshold matters.
+ *
+ * The cache is shared with the background footer refresher, so whichever runs first
+ * warms it for the other. Pass force=true to bypass the cache.
+ */
+export async function getUsageCached(
+  store: Store,
+  opts?: { force?: boolean },
+): Promise<UsageReading> {
+  if (!opts?.force) {
+    const cache = loadCacheFile<UsageCache>();
+    if (cache && cache.reading?.ok && readingExhausted(cache.reading)) {
+      const now = Date.now();
+      const cycleLive = cache.cycleEnd ? now < new Date(cache.cycleEnd).getTime() : false;
+      const fresh = now - new Date(cache.fetchedAt).getTime() < EXHAUSTED_TTL_MS;
+      if (cycleLive && fresh) {
+        return { ...cache.reading, cached: true, fetchedAt: cache.fetchedAt };
+      }
+    }
+  }
+  const fetchedAt = new Date().toISOString();
+  const reading = await getUsage(store);
+  reading.fetchedAt = fetchedAt;
+  // Only persist successful reads; keep a bad read from masking a good cache.
+  if (reading.ok) {
+    saveCacheFile({ fetchedAt, cycleEnd: reading.billingCycle?.end, reading } satisfies UsageCache);
+  }
+  return reading;
+}
+
 export function buildSummary(r: UsageReading): string {
   const parts: string[] = [];
   if (r.includedRequests) {
@@ -524,7 +590,7 @@ export function decideConserve(reading: UsageReading, thresholdPct: number): Con
   // doesn't pay out of pocket, so there's nothing left to conserve: turn conserve
   // OFF and just flag it so the caller notifies the user once, then continues.
   const ir = reading.includedRequests;
-  base.exhausted = ir ? ir.remaining <= 0 : pct >= 100;
+  base.exhausted = readingExhausted(reading);
   if (base.exhausted) {
     base.conserve = false;
     const spend = reading.spend
@@ -560,9 +626,11 @@ export function buildFooter(r: UsageReading): string {
         : `$${r.spend.usedDollars.toFixed(2)} spent`,
     );
   }
-  const now = new Date();
-  const hh = String(now.getHours()).padStart(2, "0");
-  const mm = String(now.getMinutes()).padStart(2, "0");
+  // Reflect the underlying fetch time (older when served from cache) so the
+  // stamp stays honest instead of implying every message is a live read.
+  const stamp = r.fetchedAt ? new Date(r.fetchedAt) : new Date();
+  const hh = String(stamp.getHours()).padStart(2, "0");
+  const mm = String(stamp.getMinutes()).padStart(2, "0");
   return `${fence}\nCursor Usage: ${bits.join(" · ")} (as of ${hh}:${mm})\n${fence}`;
 }
 

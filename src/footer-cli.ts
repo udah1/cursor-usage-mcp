@@ -4,11 +4,14 @@
 // background (non-blocking), so the agent's footer reflects live usage
 // instead of the value captured at task start.
 import { loadStore } from "./storage.js";
-import { getUsage, buildFooter } from "./usage.js";
+import { getUsageCached, buildFooter } from "./usage.js";
 
 async function main(): Promise<void> {
   const store = loadStore();
-  const reading = await getUsage(store);
+  // Shared cache with get_usage: while exhausted this serves the cached reading
+  // (and refreshes it at most daily / on cycle reset); below the limit it fetches
+  // fresh each run, warming the cache for the next get_usage call.
+  const reading = await getUsageCached(store);
   process.stdout.write(buildFooter(reading) + "\n");
 }
 

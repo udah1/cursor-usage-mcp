@@ -22,6 +22,14 @@ plan (usage moves to on-demand, covered by the org — not out of your pocket) t
 you once** that the 500 are used up and it's on on-demand, then **continues normally** — no approval
 prompts and no more conserving, since there's nothing left to conserve.
 
+**Usage cache.** Once exhausted, the decision can't change until the billing cycle resets (used only
+goes up), so `get_usage` **serves a cached reading** instead of hitting the network on every task —
+turning a ~1s call into a ~10ms read. The cache lives in `~/.cursor-usage/cache.json`, auto-invalidates
+at the cycle's `billingCycleEnd` (from the API), and refreshes at most once/day as a safety net. Below
+the limit it always fetches fresh (crossing the threshold matters). Verbose isn't affected — the footer
+has its own non-blocking background refresher that shares the same cache. Pass `refresh: true` to
+`get_usage`, or `login`/`logout`, to force a fresh read.
+
 ### How it works (three pieces)
 
 1. **Auth (zero-setup by default)** — `get_usage` reconstructs your dashboard session from the token

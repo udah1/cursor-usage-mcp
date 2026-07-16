@@ -10,8 +10,10 @@ import {
   clearSession,
   isVerbose,
   isFollowup,
+  loadCacheFile,
+  CACHE_FILE,
 } from "./storage.js";
-import { getUsage, decideConserve, getUsageBreakdown, buildFooter } from "./usage.js";
+import { getUsageCached, decideConserve, getUsageBreakdown, buildFooter } from "./usage.js";
 import { runLogin } from "./login.js";
 import { findStateDb, readLocalSession } from "./token.js";
 
@@ -62,12 +64,18 @@ server.registerTool(
       "questions/options UI (free) instead of open-ended prompts or silent defaults, and batch them " +
       "into one prompt. If followup is true, end each task with a brief 'anything else?' options " +
       "question. Auth is automatic (reads Cursor's local token); if needsLogin is true, ask the user " +
-      "to ensure Cursor is open/logged in on this machine, or to run the 'login' tool.",
-    inputSchema: {},
+      "to ensure Cursor is open/logged in on this machine, or to run the 'login' tool. Once the quota " +
+      "is exhausted the reading is cached until the cycle resets (pass refresh=true to force a fresh read).",
+    inputSchema: {
+      refresh: z
+        .boolean()
+        .optional()
+        .describe("Bypass the cache and force a fresh fetch. Default false."),
+    },
   },
-  async () => {
+  async ({ refresh }) => {
     const store = loadStore();
-    const reading = await getUsage(store);
+    const reading = await getUsageCached(store, { force: Boolean(refresh) });
     const decision = decideConserve(reading, effectiveThreshold(store));
     const mode = decision.exhausted
       ? "INCLUDED REQUESTS USED UP — the 500 are gone; you're now on on-demand, covered by the org (the user does " +
@@ -128,7 +136,8 @@ server.registerTool(
     let usageText = "";
     if (result.cookieCaptured && result.endpointsFound > 0) {
       const store = loadStore();
-      const reading = await getUsage(store);
+      // Force a fresh read (and refresh the cache) right after logging in.
+      const reading = await getUsageCached(store, { force: true });
       const decision = decideConserve(reading, effectiveThreshold(store));
       const mode = decision.conserve ? "CONSERVE MODE ON" : "Conserve mode off";
       usageText = `\n\nCurrent usage: ${decision.summary}\n${mode} — ${decision.reason}`;
@@ -298,12 +307,16 @@ server.registerTool(
   "status",
   {
     title: "Show cursor-usage configuration status",
-    description: "Reports whether a session/endpoints are stored, when they were captured, and the current threshold.",
+    description: "Reports auth source, stored session/endpoints, thresholds, verbose/follow-up settings, and usage-cache age/cycle.",
     inputSchema: {},
   },
   async () => {
     const store = loadStore();
     const local = await readLocalSession();
+    const cache = loadCacheFile<{ fetchedAt: string; cycleEnd?: string }>();
+    const cacheAgeMin = cache
+      ? Math.round((Date.now() - new Date(cache.fetchedAt).getTime()) / 60000)
+      : null;
     return {
       content: [
         {
@@ -311,6 +324,12 @@ server.registerTool(
           text: JSON.stringify(
             {
               authSource: local ? "local-token" : hasSession(store) ? "login" : "none",
+              cache: {
+                file: CACHE_FILE,
+                fetchedAt: cache?.fetchedAt ?? null,
+                ageMinutes: cacheAgeMin,
+                cycleEnd: cache?.cycleEnd ?? null,
+              },
               localToken: {
                 available: Boolean(local),
                 stateDbPath: findStateDb() ?? null,

@@ -9,6 +9,12 @@ import { mkdirSync, readFileSync, writeFileSync, existsSync, rmSync } from "node
 export const STORE_DIR = join(homedir(), ".cursor-usage");
 export const BROWSER_DIR = join(STORE_DIR, "browser");
 const STORE_FILE = join(STORE_DIR, "store.json");
+/**
+ * Volatile usage cache, kept SEPARATE from store.json so the settings/session file
+ * isn't rewritten on every reading. Shared by get_usage and the background footer
+ * refresher so a single fetch serves both.
+ */
+export const CACHE_FILE = join(STORE_DIR, "cache.json");
 
 export interface CapturedEndpoint {
   /** Full request URL that returned usage/spend data. */
@@ -79,6 +85,35 @@ export function hasSession(store: Store): boolean {
   return Boolean(store.cookieHeader && store.endpoints.length > 0);
 }
 
+/** Read the volatile usage cache. Returns null if absent or unparseable. */
+export function loadCacheFile<T>(): T | null {
+  if (!existsSync(CACHE_FILE)) return null;
+  try {
+    return JSON.parse(readFileSync(CACHE_FILE, "utf8")) as T;
+  } catch {
+    return null;
+  }
+}
+
+/** Write the volatile usage cache (best-effort; never throws). */
+export function saveCacheFile(data: unknown): void {
+  try {
+    ensureDir();
+    writeFileSync(CACHE_FILE, JSON.stringify(data, null, 2), { mode: 0o600 });
+  } catch {
+    // Caching is an optimization; ignore write failures.
+  }
+}
+
+/** Remove the volatile usage cache (e.g. on login/logout). */
+export function clearCacheFile(): void {
+  try {
+    if (existsSync(CACHE_FILE)) rmSync(CACHE_FILE, { force: true });
+  } catch {
+    // ignore
+  }
+}
+
 /**
  * Clear the stored session (cookie + discovered endpoints), keeping the threshold config.
  * Optionally also wipe the saved Playwright browser profile so the next login is a full re-auth.
@@ -89,6 +124,8 @@ export function clearSession(alsoBrowser: boolean): { clearedBrowser: boolean } 
   store.endpoints = [];
   store.capturedAt = undefined;
   saveStore(store);
+  // A stale reading must not survive a logout.
+  clearCacheFile();
   let clearedBrowser = false;
   if (alsoBrowser && existsSync(BROWSER_DIR)) {
     rmSync(BROWSER_DIR, { recursive: true, force: true });
