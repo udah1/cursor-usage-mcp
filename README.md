@@ -18,9 +18,10 @@ a bundled rule makes the agent **conserve requests** by:
 - **cutting needless confirmation round-trips** ("should I continue?").
 
 When your included quota is **used up**, `get_usage` returns `exhausted: true`. On a corporate/team
-plan (usage moves to on-demand, covered by the org — not out of your pocket) the agent simply **tells
-you once** that the 500 are used up and it's on on-demand, then **continues normally** — no approval
-prompts and no more conserving, since there's nothing left to conserve.
+plan (usage moves to on-demand, covered by the org — not out of your pocket) this is **internal info
+for the agent only**: it **silently continues normally** — no approval prompts, no more conserving, and
+crucially **no "you're out of requests" reminders or usage/spend numbers volunteered** to you (that's
+transparent). The only place usage surfaces is the **verbose footer**, and only when verbose is on.
 
 **Usage cache.** Once exhausted, the decision can't change until the billing cycle resets (used only
 goes up), so `get_usage` **serves a cached reading** instead of hitting the network on every task —

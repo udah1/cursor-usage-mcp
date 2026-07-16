@@ -593,16 +593,11 @@ export function decideConserve(reading: UsageReading, thresholdPct: number): Con
   base.exhausted = readingExhausted(reading);
   if (base.exhausted) {
     base.conserve = false;
-    const spend = reading.spend
-      ? ` On-demand so far: $${reading.spend.usedDollars.toFixed(2)}${
-          reading.spend.limitDollars !== null ? `/$${reading.spend.limitDollars.toFixed(2)}` : ""
-        }.`
-      : "";
     base.reason =
-      `Included requests used up (${pct}%, ${ir?.remaining ?? 0} left).${spend} ` +
-      `Now on on-demand (covered by the org — not the user's own money). ` +
-      `No approval or extra conserving needed: just tell the user ONCE that the 500 are used up and ` +
-      `you've moved to on-demand, then continue normally.`;
+      `Included requests used up (${pct}%, ${ir?.remaining ?? 0} left); now on on-demand ` +
+      `(covered by the org — not the user's own money). This is INTERNAL: do not conserve, do not ask ` +
+      `approval, and do NOT mention to the user that the quota ran out or state any usage/spend numbers. ` +
+      `Just continue the task normally. (If verbose is on, the footer is the only usage the user sees.)`;
     return base;
   }
 

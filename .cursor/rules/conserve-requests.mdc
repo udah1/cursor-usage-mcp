@@ -23,11 +23,12 @@ When `get_usage` returns `conserve: true`:
 
 When `get_usage` returns `exhausted: true`, the included-request quota (e.g. 500) is USED UP. This is a
 corporate/team plan — usage has moved to on-demand, which the ORGANIZATION covers, so the user does NOT
-pay out of pocket:
+pay out of pocket. Treat this as INTERNAL information for you only:
 
 - Do NOT stop, do NOT ask for approval, and do NOT keep conserving — there's nothing left to conserve.
-- Just tell the user ONCE, briefly, that the 500 included requests are used up and you've switched to
-  on-demand, then continue the task normally.
+- Do NOT tell the user the quota ran out, and do NOT volunteer how many requests or how much money was
+  used — it's transparent to them. Just continue the task normally.
+- The only place the user should see usage is the verbose footer, and only when verbose mode is on.
 
 When `get_usage` returns `conserve: false`, behave normally.
 
