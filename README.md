@@ -358,9 +358,17 @@ git push --follow-tags # pushes the commit and the tag → CI publishes to npm
 ```
 
 The workflow runs `npm ci && npm run build`, verifies the tag matches `package.json`'s version, then
-`npm publish --access public --provenance`.
+`npm publish --access public`.
 
-**One-time setup:** add an npm **automation token** as the GitHub repo secret `NPM_TOKEN`
-(Settings → Secrets and variables → Actions). Create it at npmjs.com → Access Tokens → *Generate New
-Token* → **Automation**. Provenance uses the workflow's OIDC (`id-token: write`) and requires the repo
-to be public.
+**Auth = npm Trusted Publishing (OIDC) — no token/secret.** The workflow authenticates with GitHub's
+OIDC token (`id-token: write`); provenance is generated automatically. One-time setup on npmjs.com:
+package → **Settings → Publishing access → Trusted Publisher → GitHub Actions**, and enter:
+
+| Field | Value |
+|-------|-------|
+| Organization or user | `udah1` |
+| Repository | `cursor-usage-mcp` |
+| Workflow filename | `release.yml` |
+| Environment | *(leave blank)* |
+
+(The workflow upgrades npm to `@latest` in CI because Trusted Publishing needs npm ≥ 11.5.1.)
