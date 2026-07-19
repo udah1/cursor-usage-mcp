@@ -361,7 +361,27 @@ server.registerTool(
   },
 );
 
+/**
+ * Persist the EFFECTIVE config (env vars from mcp.json override stored values) into
+ * the store on startup. The reminder/footer CLIs are launched by the postToolUse
+ * hook WITHOUT the MCP's env, so they read these flags from the store — this keeps
+ * them in sync with what the user configured via env.
+ */
+function syncEffectiveConfig(): void {
+  const store = loadStore();
+  const ev = isVerbose(store);
+  const ef = isFollowup(store);
+  const et = effectiveThreshold(store);
+  if (store.verbose !== ev || store.followup !== ef || store.activationThresholdPct !== et) {
+    store.verbose = ev;
+    store.followup = ef;
+    store.activationThresholdPct = et;
+    saveStore(store);
+  }
+}
+
 async function main(): Promise<void> {
+  syncEffectiveConfig();
   const transport = new StdioServerTransport();
   await server.connect(transport);
   // Never write to stdout — it's the MCP transport. Diagnostics go to stderr.

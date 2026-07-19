@@ -151,11 +151,24 @@ For a chat that was **already open** before you installed/updated this:
    If verbose is on, end every message with the footer.
    ```
 
+## Reminder hook (flag-aware self-check)
+
+`hooks/cursor-usage-reminder.sh` is an optional `postToolUse` hook (installed at
+`~/.cursor/hooks/`) that periodically re-injects a short self-check so long chats keep following the
+rules. It's **flag-aware**: `reminder-cli` builds the text from the *current* state, so it only mentions
+modes that are actually active — e.g. once the quota is **exhausted** it drops the CONSERVE nudge
+(nothing left to conserve), and it omits FOLLOW-UP unless follow-up mode is on. The refresh runs
+detached (non-blocking) and shares the usage cache.
+
+Because the hook launches the CLIs **without** the MCP's `env`, the MCP **syncs the effective config**
+(env-aware `verbose`/`followup`/`threshold`) into `~/.cursor-usage/store.json` on startup, so the
+hook-run CLIs read the same settings you configured via `mcp.json`.
+
 ## Tools
 
 | Tool | What it does |
 |------|--------------|
-| `get_usage` | Reads usage and returns the conserve decision + an **`exhausted`** flag (included quota used up → on-demand, corp-covered; agent just notifies once and continues). Call at task start. Includes included-request count, on-demand spend, plan, **billing-cycle reset + days left**, and a **burn-rate projection** (requests/day → projected total by reset). |
+| `get_usage` | Reads usage and returns the conserve decision + an **`exhausted`** flag (included quota used up → on-demand, corp-covered; the agent silently continues, no reminders/numbers). Call at task start. Includes included-request count, on-demand spend, plan, **billing-cycle reset + days left**, and a **burn-rate projection** (requests/day → projected total by reset). |
 | `usage_breakdown` | This cycle's usage broken down **by model**: cost, request count, and token totals (input/output/cache). Heavier than `get_usage`; call on request. |
 | `login` | **Fallback** browser login + endpoint auto-discovery (only needed when the local-token path can't be used). Reports current usage immediately. |
 | `logout` | Clears the stored `login` session (cookie + endpoints). Does not affect the local-token path. `forgetBrowser=true` also wipes the saved browser profile. |
