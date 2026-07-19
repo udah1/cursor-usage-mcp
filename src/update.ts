@@ -1,43 +1,47 @@
-// Daily "is there a newer version?" check against the GitHub repo.
+// Daily "is there a newer version?" check. Two modes, auto-detected:
 //
-// The repo has no releases/tags, so a "new version" == new commits on origin/master
-// that the local checkout doesn't have. We detect this with GitHub's compare API
-// (compare <localSha>...master) — no `git fetch`, read-only, and fully fail-open
-// (offline / proxy / rate-limit just means "no update surfaced").
+//  - npm install (no .git): compare the installed package version against the
+//    `latest` dist-tag on the npm registry. This is the normal path for users who
+//    installed via npx.
+//  - git checkout (.git present): compare local HEAD against origin/master via
+//    GitHub's compare API (no `git fetch`). This is the path for contributors.
 //
-// The network call runs at most once/day and only from a background context
-// (reminder-cli / a fire-and-forget kick from get_usage), so it never adds latency
-// to the agent. get_usage itself only READS the cached state file.
+// Fully fail-open (offline / proxy / rate-limit surfaces nothing) and network runs
+// at most once/day from a background context, so it never adds latency. get_usage
+// only READS the cached state.
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { STORE_DIR } from "./storage.js";
 
-const REPO = "udah1/cursor-usage-mcp";
+const PKG_NAME = "cursor-usage-optimizer";
+const GH_REPO = "udah1/cursor-usage-mcp";
 const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 6000;
 const UPDATE_FILE = join(STORE_DIR, "update.json");
 
+export type UpdateMode = "npm" | "git";
+
 export interface UpdateState {
-  /** ISO of the last network check (drives the once/day throttle). */
   lastCheckedAt?: string;
-  /** Local HEAD sha at last check. */
-  localSha?: string;
-  /** Remote origin/master HEAD sha at last check. */
-  latestSha?: string;
-  /** How many commits origin/master is ahead of local (updates available). */
+  mode?: UpdateMode;
+  /** Installed identifier: version (npm) or HEAD sha (git). */
+  local?: string;
+  /** Latest identifier: registry `latest` version (npm) or origin/master sha (git). */
+  latest?: string;
+  /** Commits behind (git mode only). */
   aheadBy?: number;
-  /** The remote sha the user chose to skip — suppresses prompting until a newer one. */
-  dismissedSha?: string;
+  /** The `latest` value the user chose to skip — suppresses prompting until a newer one. */
+  dismissed?: string;
 }
 
 export interface UpdateStatus {
   available: boolean;
+  mode: UpdateMode;
+  local?: string;
+  latest?: string;
   aheadBy: number;
-  localSha?: string;
-  latestSha?: string;
   repoDir: string;
-  /** Copy/paste-ready commands the agent should give the user to update. */
   howToUpdate: string;
 }
 
@@ -55,16 +59,28 @@ function saveState(state: UpdateState): void {
     mkdirSync(STORE_DIR, { recursive: true, mode: 0o700 });
     writeFileSync(UPDATE_FILE, JSON.stringify(state, null, 2), { mode: 0o600 });
   } catch {
-    // best-effort; the check is an optimization
+    /* best-effort */
   }
 }
 
-/** Resolve the repo root (dist/.. or the CURSOR_USAGE_MCP_DIR override). */
+/** Repo/package root (dist/.. or the CURSOR_USAGE_MCP_DIR override). */
 export function repoDir(): string {
   const override = process.env.CURSOR_USAGE_MCP_DIR;
   if (override && override.trim() !== "") return override;
-  const here = dirname(fileURLToPath(import.meta.url)); // .../dist
-  return join(here, "..");
+  return join(dirname(fileURLToPath(import.meta.url)), "..");
+}
+
+function detectMode(dir: string): UpdateMode {
+  return existsSync(join(dir, ".git")) ? "git" : "npm";
+}
+
+function readLocalVersion(dir: string): string | undefined {
+  try {
+    const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf8")) as { version?: string };
+    return typeof pkg.version === "string" ? pkg.version : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Read local HEAD sha straight from .git (no `git` spawn). Handles loose + packed refs. */
@@ -85,15 +101,43 @@ function readLocalSha(dir: string): string | undefined {
       }
     }
   } catch {
-    // not a git checkout / unreadable
+    /* not a git checkout */
   }
   return undefined;
 }
 
-/**
- * Perform the daily network check if due (or if force). Never throws. Updates
- * update.json with the latest ahead-by count and remote sha.
- */
+/** Compare dotted semver (ignores build/prerelease). Returns 1 if a>b, -1 if a<b, 0 equal. */
+function cmpVersion(a: string, b: string): number {
+  const parse = (v: string) =>
+    v
+      .replace(/^v/, "")
+      .split("-")[0]
+      .split(".")
+      .map((n) => parseInt(n, 10) || 0);
+  const pa = parse(a);
+  const pb = parse(b);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const x = pa[i] ?? 0;
+    const y = pb[i] ?? 0;
+    if (x !== y) return x > y ? 1 : -1;
+  }
+  return 0;
+}
+
+async function fetchJson(url: string): Promise<any | undefined> {
+  try {
+    const res = await fetch(url, {
+      headers: { Accept: "application/json", "User-Agent": PKG_NAME },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+    if (!res.ok) return undefined;
+    return await res.json();
+  } catch {
+    return undefined;
+  }
+}
+
+/** Perform the daily network check if due (or force). Never throws. */
 export async function maybeCheckForUpdate(opts?: { force?: boolean }): Promise<void> {
   const state = loadState();
   const now = Date.now();
@@ -104,33 +148,33 @@ export async function maybeCheckForUpdate(opts?: { force?: boolean }): Promise<v
   ) {
     return;
   }
-  const localSha = readLocalSha(repoDir());
-  // Always stamp the check time so a failure still respects the daily throttle.
-  const next: UpdateState = { ...state, lastCheckedAt: new Date().toISOString(), localSha };
-  if (!localSha) {
-    saveState(next);
-    return;
-  }
-  try {
-    const res = await fetch(`https://api.github.com/repos/${REPO}/compare/${localSha}...master`, {
-      headers: { Accept: "application/vnd.github+json", "User-Agent": "cursor-usage-mcp" },
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-    });
-    if (res.ok) {
-      const j = (await res.json()) as {
-        ahead_by?: number;
-        commits?: Array<{ sha?: string }>;
-      };
-      const aheadBy = typeof j.ahead_by === "number" ? j.ahead_by : 0;
-      next.aheadBy = aheadBy;
-      next.latestSha =
-        aheadBy > 0 && Array.isArray(j.commits) && j.commits.length
-          ? j.commits[j.commits.length - 1].sha
-          : localSha;
+  const dir = repoDir();
+  const mode = detectMode(dir);
+  const next: UpdateState = { ...state, mode, lastCheckedAt: new Date().toISOString() };
+
+  if (mode === "npm") {
+    const local = readLocalVersion(dir);
+    next.local = local;
+    next.aheadBy = undefined;
+    if (local) {
+      const j = await fetchJson(`https://registry.npmjs.org/${PKG_NAME}/latest`);
+      const latest = typeof j?.version === "string" ? j.version : undefined;
+      if (latest) next.latest = latest;
     }
-    // Non-2xx (e.g. 404 when local sha isn't on the remote, or rate limit): fail open.
-  } catch {
-    // offline / timeout / proxy: fail open
+  } else {
+    const local = readLocalSha(dir);
+    next.local = local;
+    if (local) {
+      const j = await fetchJson(`https://api.github.com/repos/${GH_REPO}/compare/${local}...master`);
+      if (j) {
+        const aheadBy = typeof j.ahead_by === "number" ? j.ahead_by : 0;
+        next.aheadBy = aheadBy;
+        next.latest =
+          aheadBy > 0 && Array.isArray(j.commits) && j.commits.length
+            ? j.commits[j.commits.length - 1].sha
+            : local;
+      }
+    }
   }
   saveState(next);
 }
@@ -138,30 +182,38 @@ export async function maybeCheckForUpdate(opts?: { force?: boolean }): Promise<v
 /** Read-only status for get_usage/status. Never hits the network. */
 export function getUpdateStatus(): UpdateStatus {
   const state = loadState();
-  const aheadBy = state.aheadBy ?? 0;
-  const latestSha = state.latestSha;
-  const dismissed = Boolean(latestSha && state.dismissedSha && state.dismissedSha === latestSha);
-  const available = aheadBy > 0 && Boolean(latestSha) && !dismissed;
   const dir = repoDir();
+  const mode: UpdateMode = state.mode ?? detectMode(dir);
+  const local = state.local;
+  const latest = state.latest;
+  const dismissed = Boolean(latest && state.dismissed && state.dismissed === latest);
+
+  let available = false;
+  let aheadBy = 0;
+  if (mode === "npm") {
+    available = Boolean(local && latest && cmpVersion(latest, local) > 0) && !dismissed;
+  } else {
+    aheadBy = state.aheadBy ?? 0;
+    available = aheadBy > 0 && Boolean(latest) && !dismissed;
+  }
+
   const howToUpdate =
-    `Run in a terminal: cd "${dir}" && git pull && npm run build — then reload the ` +
-    `cursor-usage MCP (Settings → MCP → toggle it off/on) so the new dist/ is picked up.`;
-  return {
-    available,
-    aheadBy,
-    localSha: state.localSha,
-    latestSha,
-    repoDir: dir,
-    howToUpdate,
-  };
+    mode === "npm"
+      ? `Reload the cursor-usage MCP (Settings → MCP → toggle off/on) — npx will fetch ` +
+        `${PKG_NAME}@latest (${latest ?? "newer"}). If it's globally installed instead, run ` +
+        `npm i -g ${PKG_NAME}@latest first.`
+      : `Run in a terminal: cd "${dir}" && git pull && npm run build — then reload the ` +
+        `cursor-usage MCP so the new dist/ is picked up.`;
+
+  return { available, mode, local, latest, aheadBy, repoDir: dir, howToUpdate };
 }
 
 /** Record that the user skipped the current version; won't prompt again until a newer one. */
-export function dismissUpdate(): { dismissedSha?: string } {
+export function dismissUpdate(): { dismissed?: string } {
   const state = loadState();
-  if (state.latestSha) {
-    state.dismissedSha = state.latestSha;
+  if (state.latest) {
+    state.dismissed = state.latest;
     saveState(state);
   }
-  return { dismissedSha: state.dismissedSha };
+  return { dismissed: state.dismissed };
 }

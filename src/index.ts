@@ -108,12 +108,15 @@ server.registerTool(
     void maybeCheckForUpdate();
     const update = getUpdateStatus();
     if (update.available) {
+      const whatsNew =
+        update.mode === "npm"
+          ? `version ${update.latest} is available (you have ${update.local})`
+          : `${update.aheadBy} commit(s) ahead on GitHub`;
       text +=
-        `\n\nUPDATE AVAILABLE — a newer version of cursor-usage-mcp is on GitHub ` +
-        `(${update.aheadBy} commit(s) ahead). Ask the user ONCE, via the questions/options UI, whether ` +
-        `to update now ("Update now" / "Skip this version"). If they skip/decline, call the ` +
-        `'dismiss_update' tool so they aren't asked again until a newer version. If they accept, tell ` +
-        `them: ${update.howToUpdate}`;
+        `\n\nUPDATE AVAILABLE — a newer version of cursor-usage-optimizer (${whatsNew}). Ask the user ` +
+        `ONCE, via the questions/options UI, whether to update now ("Update now" / "Skip this version"). ` +
+        `If they skip/decline, call the 'dismiss_update' tool so they aren't asked again until a newer ` +
+        `version. If they accept, tell them: ${update.howToUpdate}`;
     }
     return {
       content: [
@@ -335,13 +338,13 @@ server.registerTool(
     inputSchema: {},
   },
   async () => {
-    const { dismissedSha } = dismissUpdate();
+    const { dismissed } = dismissUpdate();
     return {
       content: [
         {
           type: "text",
-          text: dismissedSha
-            ? `Update skipped (${dismissedSha.slice(0, 7)}). Won't ask again until a newer version lands.`
+          text: dismissed
+            ? `Update skipped (${dismissed}). Won't ask again until a newer version lands.`
             : "No pending update to skip.",
         },
       ],

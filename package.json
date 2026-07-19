@@ -1,26 +1,61 @@
 {
-  "name": "cursor-usage-mcp",
+  "name": "cursor-usage-optimizer",
   "version": "0.1.0",
-  "description": "Local MCP server that reads your Cursor usage/spend from the dashboard's authenticated backend and tells the agent when to conserve requests.",
+  "description": "Local MCP server that reads your live Cursor usage/spend and helps the agent optimize/save requests (conserve mode, verbose footer, follow-up, daily update check).",
   "type": "module",
   "bin": {
-    "cursor-usage-mcp": "dist/index.js"
+    "cursor-usage-optimizer": "dist/index.js",
+    "cursor-usage-optimizer-reminder": "dist/reminder-cli.js",
+    "cursor-usage-optimizer-footer": "dist/footer-cli.js",
+    "cursor-usage-optimizer-install-hook": "dist/install-hook.js"
+  },
+  "files": [
+    "dist",
+    "hooks",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22.5.0"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "login": "node dist/login-cli.js",
     "footer": "node dist/footer-cli.js",
+    "install-hook": "node dist/install-hook.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "tsc -p tsconfig.json && node --test \"dist/**/*.test.js\""
+    "test": "tsc -p tsconfig.json && node --test \"dist/**/*.test.js\"",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "cursor",
+    "mcp",
+    "usage",
+    "optimizer",
+    "requests",
+    "quota",
+    "model-context-protocol"
+  ],
+  "author": "udah1",
+  "license": "MIT",
+  "homepage": "https://github.com/udah1/cursor-usage-mcp#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/udah1/cursor-usage-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/udah1/cursor-usage-mcp/issues"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
-    "playwright": "^1.48.0",
     "zod": "^3.23.8"
+  },
+  "optionalDependencies": {
+    "playwright": "^1.48.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "playwright": "^1.48.0",
     "typescript": "^5.6.0"
   }
 }

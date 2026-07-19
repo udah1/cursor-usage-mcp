@@ -1,4 +1,6 @@
-# cursor-usage-mcp
+# cursor-usage-optimizer
+
+[![npm](https://img.shields.io/npm/v/cursor-usage-optimizer)](https://www.npmjs.com/package/cursor-usage-optimizer)
 
 **Purpose: stop the Cursor agent from burning through your request quota.**
 
@@ -56,16 +58,47 @@ requests; `80` = only conserve once you've used 80% of the quota. See
 
 ## Setup
 
+### Install via npm (recommended)
+
+No clone, no build. Add it to `~/.cursor/mcp.json` and let `npx` fetch it:
+
+```json
+{
+  "mcpServers": {
+    "cursor-usage": {
+      "command": "npx",
+      "args": ["-y", "cursor-usage-optimizer"],
+      "env": {
+        "CURSOR_USAGE_THRESHOLD_PCT": "0",
+        "CURSOR_USAGE_VERBOSE": "false",
+        "CURSOR_USAGE_FOLLOWUP": "false"
+      }
+    }
+  }
+}
+```
+
+Requires **Node ≥ 22.5** (uses the built-in `node:sqlite`). Reload Cursor — with the default
+local-token auth there's **no login step**, just call `get_usage`.
+
+Optionally install the flag-aware self-check hook (adds a `postToolUse` entry to `~/.cursor/hooks.json`):
+
 ```bash
-cd cursor-usage-mcp
+npx -y -p cursor-usage-optimizer cursor-usage-optimizer-install-hook
+```
+
+### From source (contributors)
+
+```bash
+git clone https://github.com/udah1/cursor-usage-mcp && cd cursor-usage-mcp
 npm install
 npx playwright install chromium   # optional: only needed for the browser `login` fallback
 npm run build
 ```
 
-The server is already registered in `~/.cursor/mcp.json` as `cursor-usage`. Restart Cursor (or
-reload the MCP) after `npm run build` so it picks up `dist/index.js`. With the default local-token
-auth there's **no login step** — just call `get_usage`.
+Then point `mcp.json` at the local build (`"command": "node", "args": ["/ABS/PATH/dist/index.js"]`)
+and set `CURSOR_USAGE_MCP_DIR` to the repo path so the hook uses your local build. Restart Cursor (or
+reload the MCP) after `npm run build`.
 
 ## Authentication
 
@@ -153,24 +186,39 @@ For a chat that was **already open** before you installed/updated this:
 
 ## Version updates (daily check)
 
-The server checks **once a day**, in the background, whether a newer version exists on
-[GitHub](https://github.com/udah1/cursor-usage-mcp). There are no releases/tags, so "newer version"
-means new commits on `origin/master` that your checkout doesn't have — detected via GitHub's compare
-API (`compare <localSha>...master`), with **no `git fetch`** and **fully fail-open** (offline / proxy /
-rate-limit simply surfaces nothing). The network call runs from the background reminder refresher (and
-a non-blocking kick from `get_usage`), so it never adds latency.
+The server checks **once a day**, in the background, whether a newer version exists. It auto-detects
+how it was installed:
+
+- **npm install** (no `.git`): compares the installed version against the `latest` dist-tag on the
+  [npm registry](https://www.npmjs.com/package/cursor-usage-optimizer).
+- **git checkout** (`.git` present): compares local `HEAD` against `origin/master` via GitHub's
+  compare API (no `git fetch`).
+
+Both are **fully fail-open** (offline / proxy / rate-limit simply surfaces nothing) and run from the
+background reminder refresher (plus a non-blocking kick from `get_usage`), so they never add latency.
 
 When an update is available, `get_usage` returns `update.available: true` and the agent asks you
 **once**, via the options UI, whether to update. If you **skip**, `dismiss_update` records that version
 so you're **not asked again until an even newer version** appears (not daily). If you **accept**, the
-agent gives you the commands (`git pull && npm run build` in the repo, then reload the MCP). State lives
-in `~/.cursor-usage/update.json`. Run `check_update` any time to check immediately.
+agent gives you the right commands for your install (reload the MCP so `npx` fetches `@latest`, or
+`git pull && npm run build` for a clone). State lives in `~/.cursor-usage/update.json`. Run
+`check_update` any time to check immediately.
 
 ## Reminder hook (flag-aware self-check)
 
-`hooks/cursor-usage-reminder.sh` is an optional `postToolUse` hook (installed at
-`~/.cursor/hooks/`) that periodically re-injects a short self-check so long chats keep following the
-rules. It's **flag-aware**: `reminder-cli` builds the text from the *current* state, so it only mentions
+`hooks/cursor-usage-optimizer-reminder.sh` is an optional `postToolUse` hook that periodically
+re-injects a short self-check so long chats keep following the rules. Install it with:
+
+```bash
+npx -y -p cursor-usage-optimizer cursor-usage-optimizer-install-hook
+```
+
+This copies the script to `~/.cursor/hooks/` and adds the `postToolUse` entry to
+`~/.cursor/hooks.json` (replacing any older cursor-usage reminder entry). The installed hook works
+for **both** install modes: if `CURSOR_USAGE_MCP_DIR` points at a built local clone it uses that,
+otherwise it refreshes via `npx -y -p cursor-usage-optimizer cursor-usage-optimizer-reminder`.
+
+It's **flag-aware**: `reminder-cli` builds the text from the *current* state, so it only mentions
 modes that are actually active — e.g. once the quota is **exhausted** it drops the CONSERVE nudge
 (nothing left to conserve), and it omits FOLLOW-UP unless follow-up mode is on. The refresh runs
 detached (non-blocking) and shares the usage cache.
@@ -207,13 +255,15 @@ There are two ways to set it, and **the env var wins** if both are set:
 
 ```json
 "cursor-usage": {
-  "command": "node",
-  "args": ["/ABSOLUTE/PATH/TO/cursor-usage-mcp/dist/index.js"],
+  "command": "npx",
+  "args": ["-y", "cursor-usage-optimizer"],
   "env": {
     "CURSOR_USAGE_THRESHOLD_PCT": "80"
   }
 }
 ```
+
+(For a local clone, use `"command": "node", "args": ["/ABS/PATH/dist/index.js"]` instead.)
 
 Change the number and reload the MCP. Accepts `0`–`100`. Leave it as `"0"` (or remove it) for the
 default always-conserve behavior. If `CURSOR_USAGE_THRESHOLD_PCT` is set, it **overrides** any value
@@ -296,3 +346,21 @@ bucket when spend is `0` or the seat quota can't be read. Individual accounts ju
 
 `get_usage` always returns the **raw** JSON per source, so if a field ever looks off you can inspect
 `raw` and adjust `parseLegacyBucket` / `computeIncludedRequests` / `parseSummary` in `src/usage.ts`.
+
+## Releasing (maintainers)
+
+Publishing to npm is automated via GitHub Actions (`.github/workflows/release.yml`) and triggered by
+a version tag:
+
+```bash
+npm version patch      # bumps package.json + creates a vX.Y.Z tag (use minor/major as needed)
+git push --follow-tags # pushes the commit and the tag → CI publishes to npm
+```
+
+The workflow runs `npm ci && npm run build`, verifies the tag matches `package.json`'s version, then
+`npm publish --access public --provenance`.
+
+**One-time setup:** add an npm **automation token** as the GitHub repo secret `NPM_TOKEN`
+(Settings → Secrets and variables → Actions). Create it at npmjs.com → Access Tokens → *Generate New
+Token* → **Automation**. Provenance uses the workflow's OIDC (`id-token: write`) and requires the repo
+to be public.

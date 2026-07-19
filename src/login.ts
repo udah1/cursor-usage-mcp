@@ -1,4 +1,4 @@
-import { chromium, type BrowserContext } from "playwright";
+import type { BrowserContext } from "playwright";
 import { BROWSER_DIR, loadStore, saveStore, type CapturedEndpoint } from "./storage.js";
 
 /**
@@ -67,6 +67,19 @@ export async function runLogin(opts: {
   const log = opts.log ?? (() => {});
 
   log("Launching browser. Log in to Cursor if prompted, then open your usage/dashboard page.");
+
+  // Playwright is an OPTIONAL dependency (only needed for this browser fallback),
+  // so it's imported lazily — npx users who rely on the local-token path never pull it.
+  let chromium: typeof import("playwright").chromium;
+  try {
+    ({ chromium } = await import("playwright"));
+  } catch {
+    throw new Error(
+      "The browser login fallback needs Playwright, which isn't installed. Install it with " +
+        "`npm i playwright && npx playwright install chromium`, or just use the default local-token " +
+        "auth (make sure Cursor is open and logged in on this machine).",
+    );
+  }
 
   const context: BrowserContext = await chromium.launchPersistentContext(BROWSER_DIR, {
     headless: false,
