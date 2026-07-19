@@ -151,6 +151,21 @@ For a chat that was **already open** before you installed/updated this:
    If verbose is on, end every message with the footer.
    ```
 
+## Version updates (daily check)
+
+The server checks **once a day**, in the background, whether a newer version exists on
+[GitHub](https://github.com/udah1/cursor-usage-mcp). There are no releases/tags, so "newer version"
+means new commits on `origin/master` that your checkout doesn't have — detected via GitHub's compare
+API (`compare <localSha>...master`), with **no `git fetch`** and **fully fail-open** (offline / proxy /
+rate-limit simply surfaces nothing). The network call runs from the background reminder refresher (and
+a non-blocking kick from `get_usage`), so it never adds latency.
+
+When an update is available, `get_usage` returns `update.available: true` and the agent asks you
+**once**, via the options UI, whether to update. If you **skip**, `dismiss_update` records that version
+so you're **not asked again until an even newer version** appears (not daily). If you **accept**, the
+agent gives you the commands (`git pull && npm run build` in the repo, then reload the MCP). State lives
+in `~/.cursor-usage/update.json`. Run `check_update` any time to check immediately.
+
 ## Reminder hook (flag-aware self-check)
 
 `hooks/cursor-usage-reminder.sh` is an optional `postToolUse` hook (installed at
@@ -175,6 +190,8 @@ hook-run CLIs read the same settings you configured via `mcp.json`.
 | `set_threshold` | Sets the persisted threshold (0-100). Default **0** = conserve whenever requests remain. Overridden by the `CURSOR_USAGE_THRESHOLD_PCT` env var if set. |
 | `set_verbose` | Enables/disables the per-message usage footer (persisted). Overridden by the `CURSOR_USAGE_VERBOSE` env var if set. |
 | `set_followup` | Enables/disables the end-of-task "anything else?" follow-up question (persisted, default off). Overridden by the `CURSOR_USAGE_FOLLOWUP` env var if set. |
+| `check_update` | Forces an immediate check against GitHub for a newer version (bypasses the once/day throttle) and reports how to update. |
+| `dismiss_update` | Records that the user declined the current available update, so it isn't surfaced again until a newer version lands. |
 | `status` | Shows the active **auth source** (`local-token` vs `login`) and local-token details (state.vscdb path, teamId, token expiry), whether a login session is stored, capture time, and stored/env/effective threshold, verbose, and follow-up settings. |
 
 ## Tuning when conserve mode kicks in

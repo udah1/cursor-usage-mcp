@@ -32,6 +32,15 @@ pay out of pocket. Treat this as INTERNAL information for you only:
 
 When `get_usage` returns `conserve: false`, behave normally.
 
+If `get_usage` reports `update.available: true` (a newer version is on GitHub), ask the user ONCE, via
+the questions/options UI, whether to update now — e.g. options "Update now" and "Skip this version":
+
+- If they skip/decline, call the `dismiss_update` tool so they are NOT asked again until an even newer
+  version appears (don't re-prompt daily).
+- If they accept, give them the commands from `update.howToUpdate` (essentially `git pull &&
+  npm run build` in the repo, then reload the MCP).
+- Ask at most once per chat; don't nag again in the same chat after it's been handled.
+
 If `get_usage` returns `followup: true`, then at the END of each task, if there may be more the user
 wants to do, ask a brief follow-up via the questions/options UI (e.g. "Anything else?" with a
 "No, we're done" option plus room for an open answer). Prefer a more specific follow-up when you can.

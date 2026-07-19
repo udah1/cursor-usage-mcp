@@ -9,9 +9,13 @@
 // ~10ms read, and it runs detached from the hook (non-blocking).
 import { loadStore, isVerbose, isFollowup, effectiveThreshold } from "./storage.js";
 import { getUsageCached, decideConserve, buildFooter } from "./usage.js";
+import { maybeCheckForUpdate } from "./update.js";
 
 async function main(): Promise<void> {
   const store = loadStore();
+  // Primary trigger for the once/day update check — runs detached from the hook,
+  // so its network call adds no latency to the agent. Self-throttled + fail-open.
+  await maybeCheckForUpdate();
   const reading = await getUsageCached(store);
   const decision = decideConserve(reading, effectiveThreshold(store));
   const verbose = isVerbose(store);

@@ -15,6 +15,7 @@ import {
 } from "./storage.js";
 import { getUsageCached, decideConserve, getUsageBreakdown, buildFooter } from "./usage.js";
 import { runLogin } from "./login.js";
+import { maybeCheckForUpdate, getUpdateStatus, dismissUpdate } from "./update.js";
 import { findStateDb, readLocalSession } from "./token.js";
 
 const SERVER_INSTRUCTIONS = `cursor-usage: reads the current user's Cursor usage/spend from the dashboard's
@@ -45,6 +46,10 @@ FOLLOW-UP MODE (apply whenever the followup flag from get_usage is true):
   can respond to.
 
 When the conserve flag is false, behave normally.
+
+UPDATES: if get_usage reports update.available, ask the user ONCE (via the options UI) whether to
+update now ("Update now" / "Skip this version"). On skip → call dismiss_update (won't re-ask until a
+newer version). On accept → give them update.howToUpdate. Never nag more than once per chat.
 
 Auth is automatic: get_usage reads Cursor's local token, so no login is normally needed. Only if it
 reports needsLogin (e.g. the MCP runs on a different machine than Cursor) tell the user to make sure
@@ -98,10 +103,25 @@ server.registerTool(
         `\n\nFOLLOW-UP MODE ON — at the end of this task, if there may be more the user wants to do, ` +
         `ask a brief follow-up via the questions/options UI (e.g. "Anything else?" + a "No, we're done" option).`;
     }
+    // Refresh the once/day update check in the background (never blocks this call),
+    // and surface any pending update so the agent can offer it ONCE.
+    void maybeCheckForUpdate();
+    const update = getUpdateStatus();
+    if (update.available) {
+      text +=
+        `\n\nUPDATE AVAILABLE — a newer version of cursor-usage-mcp is on GitHub ` +
+        `(${update.aheadBy} commit(s) ahead). Ask the user ONCE, via the questions/options UI, whether ` +
+        `to update now ("Update now" / "Skip this version"). If they skip/decline, call the ` +
+        `'dismiss_update' tool so they aren't asked again until a newer version. If they accept, tell ` +
+        `them: ${update.howToUpdate}`;
+    }
     return {
       content: [
         { type: "text", text },
-        { type: "text", text: JSON.stringify({ ...decision, verbose, followup, footer }, null, 2) },
+        {
+          type: "text",
+          text: JSON.stringify({ ...decision, verbose, followup, footer, update }, null, 2),
+        },
       ],
     };
   },
@@ -306,6 +326,54 @@ server.registerTool(
 );
 
 server.registerTool(
+  "dismiss_update",
+  {
+    title: "Skip the current available update",
+    description:
+      "Call this when the user declines an available update. Records the current remote version as " +
+      "skipped so get_usage won't surface it again — until an even newer version appears on GitHub.",
+    inputSchema: {},
+  },
+  async () => {
+    const { dismissedSha } = dismissUpdate();
+    return {
+      content: [
+        {
+          type: "text",
+          text: dismissedSha
+            ? `Update skipped (${dismissedSha.slice(0, 7)}). Won't ask again until a newer version lands.`
+            : "No pending update to skip.",
+        },
+      ],
+    };
+  },
+);
+
+server.registerTool(
+  "check_update",
+  {
+    title: "Check now for a newer version",
+    description:
+      "Forces an immediate check against GitHub (bypasses the once/day throttle) and reports whether " +
+      "a newer version is available plus how to update. Normally the check runs automatically once a day.",
+    inputSchema: {},
+  },
+  async () => {
+    await maybeCheckForUpdate({ force: true });
+    const update = getUpdateStatus();
+    const text = update.available
+      ? `Update available — ${update.aheadBy} commit(s) ahead. ${update.howToUpdate}`
+      : "Up to date (or couldn't reach GitHub — check fails open).";
+    return {
+      content: [
+        { type: "text", text },
+        { type: "text", text: JSON.stringify(update, null, 2) },
+      ],
+    };
+  },
+);
+
+server.registerTool(
   "status",
   {
     title: "Show cursor-usage configuration status",
@@ -351,6 +419,7 @@ server.registerTool(
               storedFollowup: store.followup,
               envFollowup: process.env.CURSOR_USAGE_FOLLOWUP ?? null,
               effectiveFollowup: isFollowup(store),
+              update: getUpdateStatus(),
             },
             null,
             2,
