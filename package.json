@@ -1,6 +1,6 @@
 {
   "name": "cursor-usage-optimizer",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Local MCP server that reads your live Cursor usage/spend and helps the agent optimize/save requests (conserve mode, verbose footer, follow-up, daily update check).",
   "type": "module",
   "bin": {
