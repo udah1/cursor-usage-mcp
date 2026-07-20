@@ -1,6 +1,14 @@
 # cursor-usage-optimizer
 
-[![npm](https://img.shields.io/npm/v/cursor-usage-optimizer)](https://www.npmjs.com/package/cursor-usage-optimizer)
+[![npm version](https://img.shields.io/npm/v/cursor-usage-optimizer?logo=npm&label=npm&color=cb3837)](https://www.npmjs.com/package/cursor-usage-optimizer)
+[![GitHub stars](https://img.shields.io/github/stars/udah1/cursor-usage-mcp?logo=github&label=stars)](https://github.com/udah1/cursor-usage-mcp/stargazers)
+[![License: MIT](https://img.shields.io/npm/l/cursor-usage-optimizer?label=license&color=blue)](./LICENSE)
+[![Built for Cursor](https://img.shields.io/badge/built%20for-Cursor-000000?logo=cursor&logoColor=white)](https://cursor.com)
+
+[![npm downloads](https://img.shields.io/npm/dm/cursor-usage-optimizer?logo=npm&label=downloads&color=cb3837)](https://www.npmjs.com/package/cursor-usage-optimizer)
+[![node](https://img.shields.io/node/v/cursor-usage-optimizer?logo=node.js&logoColor=white&color=339933)](https://nodejs.org)
+[![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
+[![Release](https://img.shields.io/github/actions/workflow/status/udah1/cursor-usage-mcp/release.yml?logo=githubactions&logoColor=white&label=publish)](https://github.com/udah1/cursor-usage-mcp/actions/workflows/release.yml)
 
 **Purpose: stop the Cursor agent from burning through your request quota.**
 
